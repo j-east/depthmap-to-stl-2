@@ -1,66 +1,55 @@
-# Depth Map to STL Converter
+# Depth Map to STL
 
-A browser-based tool that converts depth map images to 3D printable STL files. No server required - runs entirely in your browser.
+Convert images to 3D printable STL files with real-time preview.
 
 ## Features
 
-- **Pure client-side** - All processing happens in your browser, no uploads to servers
-- **Configurable output**:
-  - Output width in mm
-  - Base thickness
-  - Wall height and thickness
-  - Relief depth (z-range of the depth map)
-- **Wall styles**:
-  - Flush bottom (like a coin/lithophane)
-  - Flush top (recessed relief)
-  - Centered (framed, picture-style)
-- **Crop shapes**:
-  - Rectangle
-  - Ellipse/Circle
-  - Regular polygon (3-20 sides, with rotation)
-- **Depth interpretation** - Toggle whether white = high or white = low
-- **Binary STL export** - Compact file format ready for slicers
+- **Multiple Depth Modes**: Brightness, RGB channels, or alpha channel
+- **Flexible Cropping**: Rectangle, circle, oval, or hexagon shapes
+- **Configurable Dimensions**: Control height, wall thickness, and positioning
+- **Real-time Preview**: See changes instantly with 3D viewer
+- **Export to STL**: Download binary STL files for 3D printing
 
-## Usage
-
-1. Visit the [live demo](https://YOUR_USERNAME.github.io/depthmap-to-stl/)
-2. Drop a depth map image (PNG, JPG, WebP)
-3. Adjust the parameters to your liking
-4. Click "Generate STL" to download
-
-## What is a depth map?
-
-A depth map is a grayscale image where brightness represents height/depth. Common sources include:
-
-- AI depth estimation tools
-- 3D scanning software
-- Photogrammetry exports
-- Manually painted heightmaps
-
-## Development
+## Getting Started
 
 ```bash
 # Install dependencies
 npm install
 
-# Start dev server
+# Start development server
 npm run dev
 
 # Build for production
 npm run build
-
-# Preview production build
-npm run preview
 ```
 
-## Deployment
+## Usage
 
-The project includes a GitHub Actions workflow that automatically deploys to GitHub Pages when you push to `main`.
+1. Upload an image file
+2. Adjust parameters in the sidebar
+3. Preview the 3D model in real-time
+4. Export to STL when satisfied
 
-To deploy manually:
-1. Run `npm run build`
-2. Deploy the `dist/` folder to any static hosting
+## Parameters
 
-## License
+### Depth Mapping
+- **Mode**: Choose how to interpret image data as depth
+- **Invert Depth**: Flip the depth mapping
 
-MIT
+### Dimensions
+- **Total Height**: Maximum height of the surface relief
+- **Min Height**: Minimum height (base of the relief)
+- **Wall Height**: Height of the supporting wall
+- **Wall Thickness**: Thickness of the outer wall
+
+### Wall Position
+- **Flush Bottom**: Like a coin (wall flush with bottom)
+- **Centered**: Like a framed picture (relief centered in wall)
+- **Flush Top**: Wall flush with top of relief
+
+### Crop Shape
+- **Shape**: Rectangle, Circle, Oval, or Hexagon
+- **Width/Height**: Size of the crop area
+
+### Quality
+- **Resolution**: Pixels per millimeter (higher = more detail)

@@ -1,0 +1,153 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.app {
+  display: flex;
+  height: 100vh;
+  background: #0f0f0f;
+  color: #e0e0e0;
+}
+
+.sidebar {
+  width: 350px;
+  background: #1a1a1a;
+  border-right: 1px solid #333;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.viewer {
+  flex: 1;
+  position: relative;
+}
+
+.controls h2 {
+  margin-bottom: 20px;
+  color: #fff;
+  font-size: 24px;
+}
+
+.controls section {
+  margin-bottom: 24px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid #333;
+}
+
+.controls section:last-of-type {
+  border-bottom: none;
+}
+
+.controls h3 {
+  margin-bottom: 12px;
+  color: #aaa;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.controls label {
+  display: block;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+.controls input[type='number'],
+.controls input[type='range'],
+.controls select,
+.controls input[type='file'] {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 14px;
+}
+
+.controls input[type='file'] {
+  padding: 6px;
+}
+
+.controls input[type='number']:focus,
+.controls select:focus {
+  outline: none;
+  border-color: #6b8cce;
+}
+
+.controls input[type='range'] {
+  padding: 0;
+  cursor: pointer;
+}
+
+.controls label span {
+  display: inline-block;
+  margin-left: 8px;
+  color: #888;
+  font-size: 12px;
+}
+
+.controls input[type='checkbox'],
+.controls input[type='radio'] {
+  width: auto;
+  margin-right: 8px;
+  cursor: pointer;
+}
+
+.export-btn {
+  width: 100%;
+  padding: 14px;
+  margin-top: 20px;
+  background: #6b8cce;
+  border: none;
+  border-radius: 6px;
+  color: white;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.export-btn:hover:not(:disabled) {
+  background: #5a7ab8;
+}
+
+.export-btn:disabled {
+  background: #3a3a3a;
+  color: #666;
+  cursor: not-allowed;
+}
+
+.export-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+/* Scrollbar styling */
+.sidebar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.sidebar::-webkit-scrollbar-track {
+  background: #1a1a1a;
+}
+
+.sidebar::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 4px;
+}
+
+.sidebar::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}

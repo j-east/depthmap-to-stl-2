@@ -1,51 +1,41 @@
-export type WallStyle = 'flush-bottom' | 'flush-top' | 'centered';
-
-export type CropShape =
-  | { type: 'rectangle' }
-  | { type: 'ellipse' }
-  | { type: 'polygon'; sides: number; rotation: number };
-
 export interface DepthMapConfig {
-  // Output dimensions
-  outputWidthMm: number;
+  // Height parameters (in mm)
+  totalHeight: number;
+  minHeight: number;
+  wallHeight: number;
+  wallThickness: number;
 
-  // Heights
-  baseThicknessMm: number;    // solid base below everything
-  wallHeightMm: number;       // height of walls around the edge
-  reliefDepthMm: number;      // z-range of the depth map relief
+  // Wall positioning
+  wallPosition: 'flush-bottom' | 'centered' | 'flush-top';
 
-  // Wall style
-  wallStyle: WallStyle;
-  wallThicknessMm: number;
+  // Depth mapping
+  depthMode: 'brightness' | 'red' | 'green' | 'blue' | 'alpha';
+  invertDepth: boolean;
+  contrastCurve: number; // 0.1 to 10, where 1 is linear, <1 emphasizes highlights, >1 emphasizes shadows
+  maxSlope: number; // Maximum height difference between adjacent pixels (hard limit)
+  smoothingRadius: number; // Gaussian blur radius to soften transitions (0 = off)
 
-  // Crop/mask
-  cropShape: CropShape;
+  // Cropping
+  cropShape: 'rectangle' | 'circle' | 'oval' | 'polygon';
+  cropWidth: number;  // 0-1, percentage of image width
+  cropHeight: number; // 0-1, percentage of image height
 
-  // Depth interpretation
-  invertDepth: boolean;       // true = white is high, false = white is low
+  // Image orientation
+  flipHorizontal: boolean;
+  flipVertical: boolean;
+  rotate180: boolean;
+
+  // Quality
+  resolution: number; // pixels per mm
 }
 
-export const DEFAULT_CONFIG: DepthMapConfig = {
-  outputWidthMm: 100,
-  baseThicknessMm: 2,
-  wallHeightMm: 5,
-  reliefDepthMm: 3,
-  wallStyle: 'flush-bottom',
-  wallThicknessMm: 2,
-  cropShape: { type: 'rectangle' },
-  invertDepth: false,
-};
-
-// A simple 3D vertex
-export interface Vec3 {
-  x: number;
-  y: number;
-  z: number;
+export interface ImageData {
+  data: Uint8ClampedArray;
+  width: number;
+  height: number;
 }
 
-// A triangle defined by three vertices
-export interface Triangle {
-  v1: Vec3;
-  v2: Vec3;
-  v3: Vec3;
+export interface MeshData {
+  vertices: Float32Array;
+  indices: Uint32Array;
 }
