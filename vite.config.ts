@@ -3,4 +3,9 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  base: '/depthmap-to-stl-2/',
+  build: {
+    outDir: 'dist',
+    assetsDir: 'assets',
+  },
 })

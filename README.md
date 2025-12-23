@@ -2,6 +2,8 @@
 
 Convert images to 3D printable STL files with real-time preview.
 
+**Live Demo:** [https://j-east.github.io/depthmap-to-stl-2/](https://j-east.github.io/depthmap-to-stl-2/)
+
 ## Features
 
 - **Multiple Depth Modes**: Brightness, RGB channels, or alpha channel
