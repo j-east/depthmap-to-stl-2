@@ -1,20 +1,34 @@
 import { DepthMapConfig } from '../types';
+import { useState } from 'react';
 
 interface ControlsProps {
   config: DepthMapConfig;
   onConfigChange: (config: DepthMapConfig) => void;
   onImageUpload: (file: File) => void;
+  onAIGenerate: (file: File) => void;
   onExportSTL: () => void;
   hasImage: boolean;
+  authenticated: boolean;
+  onLogin: () => void;
+  onLogout: () => void;
+  generatingAI: boolean;
+  aiError: string | null;
 }
 
 export default function Controls({
   config,
   onConfigChange,
   onImageUpload,
+  onAIGenerate,
   onExportSTL,
   hasImage,
+  authenticated,
+  onLogin,
+  onLogout,
+  generatingAI,
+  aiError,
 }: ControlsProps) {
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const handleChange = <K extends keyof DepthMapConfig>(
     key: K,
     value: DepthMapConfig[K]
@@ -27,15 +41,52 @@ export default function Controls({
       <h2>Depth Map to STL</h2>
 
       <section>
-        <h3>Image</h3>
+        <h3>Authentication</h3>
+        {authenticated ? (
+          <div>
+            <p style={{ color: '#4ade80' }}>✓ Authenticated</p>
+            <button onClick={onLogout} style={{ marginTop: '0.5rem' }}>Logout</button>
+          </div>
+        ) : (
+          <div>
+            <p style={{ color: '#fbbf24' }}>Login to use AI depth map generation</p>
+            <button onClick={onLogin} style={{ marginTop: '0.5rem' }}>Login with OpenRouter</button>
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h3>Image Source</h3>
         <input
           type="file"
           accept="image/*"
           onChange={(e) => {
             const file = e.target.files?.[0];
-            if (file) onImageUpload(file);
+            if (file) {
+              setSelectedFile(file);
+              onImageUpload(file);
+            }
           }}
         />
+
+        <div style={{ marginTop: '1rem', padding: '1rem', background: 'rgba(0,0,0,0.3)', borderRadius: '4px' }}>
+          <h4 style={{ marginBottom: '0.5rem' }}>AI Depth Map Generation</h4>
+          <p style={{ fontSize: '0.9rem', marginBottom: '0.5rem', opacity: 0.8 }}>
+            Upload a photo and generate a depth map using AI (Gemini Vision)
+          </p>
+          <button
+            onClick={() => selectedFile && onAIGenerate(selectedFile)}
+            disabled={!authenticated || !selectedFile || generatingAI}
+            style={{ width: '100%' }}
+          >
+            {generatingAI ? 'Generating...' : 'Generate AI Depth Map'}
+          </button>
+          {aiError && (
+            <p style={{ color: '#ef4444', marginTop: '0.5rem', fontSize: '0.9rem' }}>
+              {aiError}
+            </p>
+          )}
+        </div>
       </section>
 
       <section>

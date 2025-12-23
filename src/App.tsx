@@ -5,6 +5,8 @@ import { DepthMapConfig, ImageData, MeshData } from './types';
 import { processImage } from './utils/depthMapProcessor';
 import { generateMesh } from './utils/meshGenerator';
 import { exportSTL } from './utils/stlExporter';
+import { handleCallback, isAuthenticated, initiateLogin, logout } from './utils/auth';
+import { generateDepthMapFromImage } from './utils/aiDepthMap';
 import './App.css';
 
 const defaultConfig: DepthMapConfig = {
@@ -32,6 +34,18 @@ function App() {
   const [imageElement, setImageElement] = useState<HTMLImageElement | null>(null);
   const [imageData, setImageData] = useState<ImageData | null>(null);
   const [meshData, setMeshData] = useState<MeshData | null>(null);
+  const [authenticated, setAuthenticated] = useState(isAuthenticated());
+  const [generatingDepthMap, setGeneratingDepthMap] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+
+  // Handle OAuth callback
+  useEffect(() => {
+    handleCallback().then((success) => {
+      if (success) {
+        setAuthenticated(true);
+      }
+    });
+  }, []);
 
   const handleImageUpload = useCallback((file: File) => {
     const reader = new FileReader();
@@ -43,6 +57,48 @@ function App() {
       img.src = e.target?.result as string;
     };
     reader.readAsDataURL(file);
+  }, []);
+
+  const handleAIDepthMapGeneration = useCallback(async (file: File) => {
+    if (!authenticated) {
+      alert('Please login with OpenRouter to use AI depth map generation');
+      return;
+    }
+
+    setGeneratingDepthMap(true);
+    setAiError(null);
+
+    try {
+      console.log('Generating AI depth map from image...');
+      const result = await generateDepthMapFromImage(file);
+      console.log('AI depth map generated:', result);
+
+      // Load the generated depth map
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        setImageElement(img);
+        setGeneratingDepthMap(false);
+      };
+      img.onerror = () => {
+        setAiError('Failed to load generated depth map image');
+        setGeneratingDepthMap(false);
+      };
+      img.src = result.imageUrl;
+    } catch (error) {
+      console.error('Error generating AI depth map:', error);
+      setAiError(error instanceof Error ? error.message : 'Failed to generate depth map');
+      setGeneratingDepthMap(false);
+    }
+  }, [authenticated]);
+
+  const handleLogin = useCallback(() => {
+    initiateLogin();
+  }, []);
+
+  const handleLogout = useCallback(() => {
+    logout();
+    setAuthenticated(false);
   }, []);
 
   // Process image when it changes
@@ -87,8 +143,14 @@ function App() {
           config={config}
           onConfigChange={setConfig}
           onImageUpload={handleImageUpload}
+          onAIGenerate={handleAIDepthMapGeneration}
           onExportSTL={handleExportSTL}
           hasImage={!!imageElement}
+          authenticated={authenticated}
+          onLogin={handleLogin}
+          onLogout={handleLogout}
+          generatingAI={generatingDepthMap}
+          aiError={aiError}
         />
       </div>
       <div className="viewer">
