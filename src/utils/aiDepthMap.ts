@@ -50,7 +50,7 @@ const pkceStorage = {
   accessToken: null as string | null,
 };
 
-export function initiatePKCEFlow(redirectUri: string = window.location.origin): void {
+export function initiatePKCEFlow(redirectUri: string = window.location.href.split('?')[0]): void {
   const codeVerifier = generateCodeVerifier();
   pkceStorage.codeVerifier = codeVerifier;
 
