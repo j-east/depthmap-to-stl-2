@@ -29,7 +29,7 @@ export async function generateDepthMapFromImage(
         'X-Title': 'DepthMap to STL',
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.0-flash-exp:free',
+        model: 'google/gemini-3-pro-image-preview',
         messages: [
           {
             role: 'user',
