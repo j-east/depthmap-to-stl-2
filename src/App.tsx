@@ -1,79 +1,92 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import Controls from './components/Controls';
 import STLViewer from './components/STLViewer';
-import { DepthMapConfig, ImageData, MeshData } from './types';
+import { DepthMapConfig, MeshData } from './types';
 import { processImage } from './utils/depthMapProcessor';
 import { generateMesh } from './utils/meshGenerator';
 import { exportSTL } from './utils/stlExporter';
 import './App.css';
 
 const defaultConfig: DepthMapConfig = {
-  totalHeight: 5,
+  totalHeight: 3,
   minHeight: 0.5,
-  wallHeight: 10,
+  wallHeight: 3,
   wallThickness: 2,
   wallPosition: 'flush-bottom',
   depthMode: 'brightness',
   invertDepth: false,
-  contrastCurve: 1.0,
-  maxSlope: 0, // 0 = no limit
+  contrastCurve: 3.0,
+  maxSlope: 0.50,
   smoothingRadius: 0, // 0 = off
-  cropShape: 'rectangle',
-  cropWidth: 0.9,
-  cropHeight: 0.9,
+  cropShape: 'oval',
+  cropWidth: 1.0,
+  cropHeight: 1.0,
   flipHorizontal: false,
   flipVertical: false,
   rotate180: true,
-  resolution: 2,
+  resolution: 10,
 };
 
 function App() {
   const [config, setConfig] = useState<DepthMapConfig>(defaultConfig);
-  const [imageElement, setImageElement] = useState<HTMLImageElement | null>(null);
-  const [imageData, setImageData] = useState<ImageData | null>(null);
+  const [sourceImage, setSourceImage] = useState<HTMLImageElement | null>(null);
+  const [depthMapImage, setDepthMapImage] = useState<HTMLImageElement | null>(null);
   const [meshData, setMeshData] = useState<MeshData | null>(null);
+  const [activeTab, setActiveTab] = useState<'images' | 'output'>('images');
 
-  const handleImageUpload = useCallback((file: File) => {
+  const handleSourceImageUpload = useCallback((file: File) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       const img = new Image();
       img.onload = () => {
-        setImageElement(img);
+        setSourceImage(img);
+        // Clear depth map and mesh when new source is uploaded
+        setDepthMapImage(null);
+        setMeshData(null);
       };
       img.src = e.target?.result as string;
     };
     reader.readAsDataURL(file);
   }, []);
 
-  // Process image when it changes
-  useEffect(() => {
-    if (!imageElement) {
-      setImageData(null);
-      return;
-    }
+  const handleDepthMapUpload = useCallback((file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        setDepthMapImage(img);
+        // Clear mesh when new depth map is uploaded
+        setMeshData(null);
+      };
+      img.src = e.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+  }, []);
 
-    console.log('Processing image...', imageElement.width, imageElement.height);
-    const processed = processImage(imageElement, config);
-    console.log('Image processed:', processed);
-    setImageData(processed);
-  }, [imageElement, config]);
-
-  // Generate mesh when image data or config changes
+  // Auto-convert to STL when depth map or config changes
   useEffect(() => {
-    if (!imageData) {
+    if (!depthMapImage) {
       setMeshData(null);
       return;
     }
 
     try {
-      console.log('Generating mesh from image data...', imageData);
-      const mesh = generateMesh(imageData, config);
+      console.log('Processing depth map image...', depthMapImage.width, depthMapImage.height);
+      const processed = processImage(depthMapImage, config);
+      console.log('Image processed:', processed);
+
+      console.log('Generating mesh from image data...', processed);
+      const mesh = generateMesh(processed, config);
       console.log('Mesh generated:', mesh, 'vertices:', mesh.vertices.length, 'indices:', mesh.indices.length);
       setMeshData(mesh);
+
+      // Auto-switch to output tab when mesh is generated
+      setActiveTab('output');
     } catch (error) {
       console.error('Error generating mesh:', error);
+      setMeshData(null);
     }
-  }, [imageData, config]);
+  }, [depthMapImage, config]);
 
   const handleExportSTL = useCallback(() => {
     if (!meshData) return;
@@ -86,13 +99,39 @@ function App() {
         <Controls
           config={config}
           onConfigChange={setConfig}
-          onImageUpload={handleImageUpload}
+          onSourceImageUpload={handleSourceImageUpload}
+          onDepthMapUpload={handleDepthMapUpload}
           onExportSTL={handleExportSTL}
-          hasImage={!!imageElement}
+          hasSourceImage={!!sourceImage}
+          hasDepthMap={!!depthMapImage}
+          hasMesh={!!meshData}
         />
       </div>
       <div className="viewer">
-        <STLViewer meshData={meshData} config={config} />
+        <div className="viewer-tabs">
+          <button
+            className={`viewer-tab ${activeTab === 'images' ? 'active' : ''}`}
+            onClick={() => setActiveTab('images')}
+          >
+            Images
+          </button>
+          <button
+            className={`viewer-tab ${activeTab === 'output' ? 'active' : ''}`}
+            onClick={() => setActiveTab('output')}
+            disabled={!meshData}
+          >
+            Output
+          </button>
+        </div>
+        <div className="viewer-content">
+          <STLViewer
+            sourceImage={sourceImage}
+            depthMapImage={depthMapImage}
+            meshData={meshData}
+            config={config}
+            activeTab={activeTab}
+          />
+        </div>
       </div>
     </div>
   );

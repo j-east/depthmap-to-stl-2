@@ -1,20 +1,70 @@
+import { useState, useEffect } from 'react';
 import { DepthMapConfig } from '../types';
+import {
+  generateAIDepthMap,
+  initiatePKCEFlow,
+  exchangeCodeForToken,
+  getStoredAccessToken,
+  clearAccessToken
+} from '../utils/aiDepthMap';
 
 interface ControlsProps {
   config: DepthMapConfig;
   onConfigChange: (config: DepthMapConfig) => void;
-  onImageUpload: (file: File) => void;
+  onSourceImageUpload: (file: File) => void;
+  onDepthMapUpload: (file: File) => void;
   onExportSTL: () => void;
-  hasImage: boolean;
+  hasSourceImage: boolean;
+  hasDepthMap: boolean;
+  hasMesh: boolean;
 }
 
 export default function Controls({
   config,
   onConfigChange,
-  onImageUpload,
+  onSourceImageUpload,
+  onDepthMapUpload,
   onExportSTL,
-  hasImage,
+  hasSourceImage,
+  hasDepthMap,
+  hasMesh,
 }: ControlsProps) {
+  const [isGeneratingAI, setIsGeneratingAI] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [sourceImageFile, setSourceImageFile] = useState<File | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+
+  // Check for existing access token on mount
+  useEffect(() => {
+    const token = getStoredAccessToken();
+    if (token) {
+      setIsAuthenticated(true);
+    }
+
+    // Check for OAuth callback code in URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
+
+    if (code) {
+      setIsAuthenticating(true);
+      exchangeCodeForToken(code)
+        .then(() => {
+          setIsAuthenticated(true);
+          setAiError(null);
+          // Clean up URL
+          window.history.replaceState({}, document.title, window.location.pathname);
+        })
+        .catch((error) => {
+          console.error('Token exchange failed:', error);
+          setAiError(error instanceof Error ? error.message : 'Authentication failed');
+        })
+        .finally(() => {
+          setIsAuthenticating(false);
+        });
+    }
+  }, []);
+
   const handleChange = <K extends keyof DepthMapConfig>(
     key: K,
     value: DepthMapConfig[K]
@@ -22,20 +72,131 @@ export default function Controls({
     onConfigChange({ ...config, [key]: value });
   };
 
+  const handleAuthenticate = () => {
+    initiatePKCEFlow();
+  };
+
+  const handleLogout = () => {
+    clearAccessToken();
+    setIsAuthenticated(false);
+  };
+
+  const handleGenerateAIDepthMap = async () => {
+    if (!sourceImageFile) {
+      setAiError('Please upload an image first');
+      return;
+    }
+
+    if (!isAuthenticated) {
+      setAiError('Please authenticate with OpenRouter first');
+      return;
+    }
+
+    setIsGeneratingAI(true);
+    setAiError(null);
+
+    try {
+      console.log('Generating AI depth map from image...');
+      const depthMapDataUrl = await generateAIDepthMap(sourceImageFile);
+      console.log('AI depth map generated, loading image...');
+
+      // Convert the data URL to a File object for consistency
+      const response = await fetch(depthMapDataUrl);
+      const blob = await response.blob();
+      const depthMapFile = new File([blob], 'ai-depth-map.png', { type: 'image/png' });
+
+      // Upload the generated depth map as the depth map
+      onDepthMapUpload(depthMapFile);
+      console.log('AI depth map loaded successfully');
+    } catch (error) {
+      console.error('Error generating AI depth map:', error);
+      setAiError(error instanceof Error ? error.message : 'Failed to generate AI depth map');
+    } finally {
+      setIsGeneratingAI(false);
+    }
+  };
+
   return (
     <div className="controls">
       <h2>Depth Map to STL</h2>
 
       <section>
-        <h3>Image</h3>
+        <h3>Source Image</h3>
         <input
           type="file"
           accept="image/*"
           onChange={(e) => {
             const file = e.target.files?.[0];
-            if (file) onImageUpload(file);
+            if (file) {
+              setSourceImageFile(file);
+              onSourceImageUpload(file);
+            }
           }}
         />
+        {hasSourceImage && (
+          <p style={{ fontSize: '0.8em', color: '#5a9e6f', marginTop: '8px' }}>
+            ✓ Source image loaded
+          </p>
+        )}
+      </section>
+
+      <section>
+        <h3>AI Depth Map Generator</h3>
+
+        {isAuthenticating ? (
+          <div style={{ padding: '12px', textAlign: 'center', color: '#aaa' }}>
+            Completing authentication...
+          </div>
+        ) : !isAuthenticated ? (
+          <>
+            <button
+              onClick={handleAuthenticate}
+              className="ai-auth-btn"
+            >
+              Sign in with OpenRouter
+            </button>
+            <p style={{ fontSize: '0.8em', color: '#666', marginTop: '8px' }}>
+              Click to authenticate with OpenRouter using OAuth (PKCE)
+            </p>
+          </>
+        ) : (
+          <>
+            <div style={{ marginBottom: '12px', fontSize: '0.9em', color: '#5a9e6f' }}>
+              ✓ Authenticated with OpenRouter
+              <button
+                onClick={handleLogout}
+                style={{
+                  marginLeft: '12px',
+                  padding: '4px 8px',
+                  fontSize: '0.8em',
+                  background: 'transparent',
+                  border: '1px solid #666',
+                  borderRadius: '4px',
+                  color: '#aaa',
+                  cursor: 'pointer'
+                }}
+              >
+                Logout
+              </button>
+            </div>
+            <button
+              onClick={handleGenerateAIDepthMap}
+              disabled={!sourceImageFile || isGeneratingAI}
+              className="ai-generate-btn"
+            >
+              {isGeneratingAI ? 'Generating...' : 'Generate AI Depth Map'}
+            </button>
+            <p style={{ fontSize: '0.8em', color: '#666', marginTop: '8px' }}>
+              Upload an image above, then click to generate a depth map using AI.
+            </p>
+          </>
+        )}
+
+        {aiError && <div className="error-message">{aiError}</div>}
+
+        <button onClick={onExportSTL} disabled={!hasMesh} className="export-btn">
+          Export STL File
+        </button>
       </section>
 
       <section>
@@ -258,9 +419,25 @@ export default function Controls({
         </label>
       </section>
 
-      <button onClick={onExportSTL} disabled={!hasImage} className="export-btn">
-        Export STL
-      </button>
+      <section>
+        <h3>Manual Depth Map Upload</h3>
+        <input
+          type="file"
+          accept="image/*"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) onDepthMapUpload(file);
+          }}
+        />
+        {hasDepthMap && (
+          <p style={{ fontSize: '0.8em', color: '#5a9e6f', marginTop: '8px' }}>
+            ✓ Depth map loaded
+          </p>
+        )}
+        <p style={{ fontSize: '0.8em', color: '#666', marginTop: '8px' }}>
+          Optional: Upload a pre-made depth map instead of generating one with AI
+        </p>
+      </section>
     </div>
   );
 }

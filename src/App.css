@@ -20,7 +20,9 @@ body {
 }
 
 .sidebar {
-  width: 350px;
+  min-width: 350px;
+  max-width: 350px;
+  flex-shrink: 0;
   background: #1a1a1a;
   border-right: 1px solid #333;
   overflow-y: auto;
@@ -28,6 +30,47 @@ body {
 }
 
 .viewer {
+  flex: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.viewer-tabs {
+  display: flex;
+  gap: 0;
+  background: #0f0f0f;
+  border-bottom: 1px solid #333;
+  padding: 0 20px;
+}
+
+.viewer-tab {
+  padding: 12px 24px;
+  background: transparent;
+  border: none;
+  color: #888;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+}
+
+.viewer-tab:hover {
+  color: #aaa;
+}
+
+.viewer-tab.active {
+  color: #e0e0e0;
+  border-bottom-color: #6b8cce;
+}
+
+.viewer-tab:disabled {
+  color: #444;
+  cursor: not-allowed;
+}
+
+.viewer-content {
   flex: 1;
   position: relative;
 }
@@ -106,10 +149,38 @@ body {
   cursor: pointer;
 }
 
-.export-btn {
+.convert-btn {
   width: 100%;
   padding: 14px;
   margin-top: 20px;
+  background: #9e7a5a;
+  border: none;
+  border-radius: 6px;
+  color: white;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.convert-btn:hover:not(:disabled) {
+  background: #8e6a4a;
+}
+
+.convert-btn:disabled {
+  background: #3a3a3a;
+  color: #666;
+  cursor: not-allowed;
+}
+
+.convert-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.export-btn {
+  width: 100%;
+  padding: 14px;
+  margin-top: 12px;
   background: #6b8cce;
   border: none;
   border-radius: 6px;
@@ -150,4 +221,64 @@ body {
 
 .sidebar::-webkit-scrollbar-thumb:hover {
   background: #555;
+}
+
+/* AI Depth Map Generator */
+.ai-auth-btn {
+  width: 100%;
+  padding: 12px;
+  background: #6b8cce;
+  border: none;
+  border-radius: 6px;
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.ai-auth-btn:hover {
+  background: #5a7ab8;
+}
+
+.ai-auth-btn:active {
+  transform: translateY(1px);
+}
+
+.ai-generate-btn {
+  width: 100%;
+  padding: 12px;
+  margin-top: 12px;
+  background: #5a9e6f;
+  border: none;
+  border-radius: 6px;
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.ai-generate-btn:hover:not(:disabled) {
+  background: #4a8e5f;
+}
+
+.ai-generate-btn:disabled {
+  background: #3a3a3a;
+  color: #666;
+  cursor: not-allowed;
+}
+
+.ai-generate-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.error-message {
+  margin-top: 8px;
+  padding: 8px;
+  background: #4a2a2a;
+  border: 1px solid #8a4a4a;
+  border-radius: 4px;
+  color: #ff8888;
+  font-size: 12px;
 }
