@@ -85,6 +85,8 @@ function renderTextAroundCircle(
 
   ctx.save();
   ctx.translate(centerX, centerY);
+  // Flip vertically to compensate for the canvas vertical flip applied during image processing
+  ctx.scale(1, -1);
 
   // Render top text (clockwise from top)
   if (config.topText) {

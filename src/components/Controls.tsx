@@ -466,12 +466,22 @@ export default function Controls({
         {config.addText && (
           <>
             <label>
-              Text:
+              Top Text:
               <input
                 type="text"
-                value={config.textContent}
-                onChange={(e) => handleChange('textContent', e.target.value)}
-                placeholder="Enter text..."
+                value={config.topText}
+                onChange={(e) => handleChange('topText', e.target.value)}
+                placeholder="Enter top text..."
+                maxLength={50}
+              />
+            </label>
+            <label>
+              Bottom Text:
+              <input
+                type="text"
+                value={config.bottomText}
+                onChange={(e) => handleChange('bottomText', e.target.value)}
+                placeholder="Enter bottom text..."
                 maxLength={50}
               />
             </label>
@@ -498,6 +508,18 @@ export default function Controls({
                 step="0.05"
               />
               <span>{(config.textDepth * 100).toFixed(0)}%</span>
+            </label>
+            <label>
+              Character Spacing:
+              <input
+                type="range"
+                value={config.textSpacing}
+                onChange={(e) => handleChange('textSpacing', parseFloat(e.target.value))}
+                min="0.8"
+                max="2.0"
+                step="0.1"
+              />
+              <span>{config.textSpacing.toFixed(1)}x</span>
             </label>
           </>
         )}

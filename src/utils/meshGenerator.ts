@@ -217,7 +217,8 @@ export function generateMesh(
   let holeRadius = 0;
   if (config.addHangingLoop) {
     holeX = 0; // Center X
-    holeY = (0 / height - 0.5) * physicalHeight + config.loopOffset; // Top edge Y position + offset
+    // Position at bottom edge (positive Y in physical coords) minus offset to move it inward
+    holeY = (physicalHeight / 2) - config.loopOffset;
     holeRadius = config.loopDiameter / 2;
   }
 
