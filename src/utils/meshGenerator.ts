@@ -193,7 +193,7 @@ export function generateMesh(
     applyGaussianSmoothing(heightMap, width, height, config.smoothingRadius);
   }
 
-  // Build vertex map for top surface
+  // Build vertex map for top surface (without hole exclusion for now)
   const vertexMap: (number | null)[][] = [];
   for (let y = 0; y < height; y++) {
     vertexMap[y] = [];
@@ -211,7 +211,17 @@ export function generateMesh(
     }
   }
 
-  // Build top surface triangles
+  // Calculate hole position if hanging loop is enabled
+  let holeX = 0;
+  let holeY = 0;
+  let holeRadius = 0;
+  if (config.addHangingLoop) {
+    holeX = 0; // Center X
+    holeY = (0 / height - 0.5) * physicalHeight + config.loopOffset; // Top edge Y position + offset
+    holeRadius = config.loopDiameter / 2;
+  }
+
+  // Build top surface triangles (skip triangles inside the hole)
   for (let y = 0; y < height - 1; y++) {
     for (let x = 0; x < width - 1; x++) {
       const tl = vertexMap[y][x];
@@ -220,6 +230,23 @@ export function generateMesh(
       const br = vertexMap[y + 1][x + 1];
 
       if (tl !== null && tr !== null && bl !== null && br !== null) {
+        // Check if this quad is inside the hole
+        if (config.addHangingLoop) {
+          const centerX_px = (x + 0.5) / width - 0.5;
+          const centerY_px = (y + 0.5) / height - 0.5;
+          const quadCenterX = centerX_px * physicalWidth;
+          const quadCenterY = centerY_px * physicalHeight;
+
+          const dx = quadCenterX - holeX;
+          const dy = quadCenterY - holeY;
+          const distFromHole = Math.sqrt(dx * dx + dy * dy);
+
+          // Skip quads whose center is inside the hole
+          if (distFromHole < holeRadius) {
+            continue;
+          }
+        }
+
         // Two triangles for this quad
         indices.push(tl, bl, tr);
         indices.push(tr, bl, br);
@@ -255,7 +282,7 @@ export function generateMesh(
     }
   }
 
-  // Build bottom surface triangles (inverted winding order)
+  // Build bottom surface triangles (inverted winding order, skip triangles inside hole)
   for (let y = 0; y < height - 1; y++) {
     for (let x = 0; x < width - 1; x++) {
       const tl = vertexMap[y][x];
@@ -264,6 +291,23 @@ export function generateMesh(
       const br = vertexMap[y + 1][x + 1];
 
       if (tl !== null && tr !== null && bl !== null && br !== null) {
+        // Check if this quad is inside the hole (same logic as top surface)
+        if (config.addHangingLoop) {
+          const centerX_px = (x + 0.5) / width - 0.5;
+          const centerY_px = (y + 0.5) / height - 0.5;
+          const quadCenterX = centerX_px * physicalWidth;
+          const quadCenterY = centerY_px * physicalHeight;
+
+          const dx = quadCenterX - holeX;
+          const dy = quadCenterY - holeY;
+          const distFromHole = Math.sqrt(dx * dx + dy * dy);
+
+          // Skip quads whose center is inside the hole
+          if (distFromHole < holeRadius) {
+            continue;
+          }
+        }
+
         // Add bottom vertex offset and reverse winding
         indices.push(
           tl + bottomVertexOffset,
@@ -281,6 +325,11 @@ export function generateMesh(
 
   // Build walls (side faces)
   addWalls(vertices, indices, vertexMap, heightMap, width, height, bottomVertexOffset, baseHeight, physicalWidth, physicalHeight, config);
+
+  // Add hanging loop if enabled
+  if (config.addHangingLoop) {
+    addHangingLoop(vertices, indices, heightMap, width, height, physicalWidth, physicalHeight, config);
+  }
 
   // Calculate and log mesh bounds for debugging
   let minZ = Infinity, maxZ = -Infinity;
@@ -406,4 +455,95 @@ function addWalls(
       }
     }
   }
+}
+
+function addHangingLoop(
+  vertices: number[],
+  indices: number[],
+  heightMap: (number | null)[][],
+  width: number,
+  height: number,
+  physicalWidth: number,
+  physicalHeight: number,
+  config: DepthMapConfig
+): void {
+  // Position the hole at the specified offset from the top edge
+  const holeX = 0; // Center X
+  const holeY = (0 / height - 0.5) * physicalHeight + config.loopOffset; // Top edge + offset
+
+  // Find the surface height at the hole location
+  let surfaceHeight = -Infinity;
+
+  // Convert hole position back to pixel coordinates to sample height
+  const pixelY = Math.round((holeY / physicalHeight + 0.5) * height);
+  const pixelX = Math.floor(width / 2);
+
+  // Sample heights around the hole position
+  for (let dy = -2; dy <= 2; dy++) {
+    for (let dx = -2; dx <= 2; dx++) {
+      const py = Math.max(0, Math.min(height - 1, pixelY + dy));
+      const px = Math.max(0, Math.min(width - 1, pixelX + dx));
+
+      if (heightMap[py] && heightMap[py][px] !== null) {
+        const vz = calculateVertexHeight(heightMap[py][px]!, config);
+        surfaceHeight = Math.max(surfaceHeight, vz);
+      }
+    }
+  }
+
+  // If we couldn't find a height, use the max height
+  if (surfaceHeight === -Infinity) {
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (heightMap[y][x] !== null) {
+          const vz = calculateVertexHeight(heightMap[y][x]!, config);
+          surfaceHeight = Math.max(surfaceHeight, vz);
+        }
+      }
+    }
+  }
+
+  const holeRadius = config.loopDiameter / 2;
+  const holeDepth = config.loopHeight;
+  const segments = 16;
+
+  const vertexOffset = vertices.length / 3;
+
+  // Calculate the base height to ensure hole doesn't go below it
+  const baseHeight = getBaseHeight(config);
+
+  // Create two rings of vertices: one at the surface, one at the bottom of the hole
+  const topZ = surfaceHeight;
+  // Ensure the hole bottom doesn't go below the base
+  const bottomZ = Math.max(baseHeight, surfaceHeight - holeDepth);
+
+  // Top ring vertices
+  for (let i = 0; i <= segments; i++) {
+    const theta = (i / segments) * Math.PI * 2;
+    const x = holeX + Math.cos(theta) * holeRadius;
+    const y = holeY + Math.sin(theta) * holeRadius;
+    vertices.push(x, y, topZ);
+  }
+
+  // Bottom ring vertices
+  for (let i = 0; i <= segments; i++) {
+    const theta = (i / segments) * Math.PI * 2;
+    const x = holeX + Math.cos(theta) * holeRadius;
+    const y = holeY + Math.sin(theta) * holeRadius;
+    vertices.push(x, y, bottomZ);
+  }
+
+  // Create the cylinder wall faces (inward-facing normals)
+  for (let i = 0; i < segments; i++) {
+    const topCurrent = vertexOffset + i;
+    const topNext = vertexOffset + i + 1;
+    const bottomCurrent = vertexOffset + (segments + 1) + i;
+    const bottomNext = vertexOffset + (segments + 1) + i + 1;
+
+    // Inward-facing triangles
+    indices.push(topCurrent, bottomCurrent, topNext);
+    indices.push(topNext, bottomCurrent, bottomNext);
+  }
+
+  // No bottom cap - the hole should always be open for hanging
 }

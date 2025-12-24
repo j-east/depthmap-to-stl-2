@@ -237,7 +237,7 @@ export default function Controls({
           <span>{config.contrastCurve.toFixed(1)} ({config.contrastCurve < 1 ? 'highlights' : config.contrastCurve > 1 ? 'shadows' : 'linear'})</span>
         </label>
         <label>
-          Slope Threshold:
+          Gradient Threshold:
           <input
             type="range"
             value={config.maxSlope}
@@ -246,7 +246,7 @@ export default function Controls({
             max="3"
             step="0.05"
           />
-          <span>{config.maxSlope.toFixed(2)}mm {config.maxSlope === 0 ? '(off)' : '(limit slopes)'}</span>
+          <span>{config.maxSlope.toFixed(2)}mm {config.maxSlope === 0 ? '(off)' : '(limit steepness)'}</span>
         </label>
         <label>
           Gaussian Smoothing:
@@ -363,6 +363,55 @@ export default function Controls({
       </section>
 
       <section>
+        <h3>Hanging Loop</h3>
+        <label>
+          <input
+            type="checkbox"
+            checked={config.addHangingLoop}
+            onChange={(e) => handleChange('addHangingLoop', e.target.checked)}
+          />
+          Add Hanging Loop
+        </label>
+        {config.addHangingLoop && (
+          <>
+            <label>
+              Hole Diameter (mm):
+              <input
+                type="number"
+                value={config.loopDiameter}
+                onChange={(e) => handleChange('loopDiameter', parseFloat(e.target.value))}
+                min="1"
+                max="10"
+                step="0.5"
+              />
+            </label>
+            <label>
+              Hole Depth (mm):
+              <input
+                type="number"
+                value={config.loopHeight}
+                onChange={(e) => handleChange('loopHeight', parseFloat(e.target.value))}
+                min="1"
+                max="10"
+                step="0.5"
+              />
+            </label>
+            <label>
+              Distance from Top (mm):
+              <input
+                type="number"
+                value={config.loopOffset}
+                onChange={(e) => handleChange('loopOffset', parseFloat(e.target.value))}
+                min="0"
+                max="20"
+                step="0.5"
+              />
+            </label>
+          </>
+        )}
+      </section>
+
+      <section>
         <h3>Crop Shape</h3>
         <label>
           Shape:
@@ -402,6 +451,56 @@ export default function Controls({
           />
           <span>{Math.round(config.cropHeight * 100)}%</span>
         </label>
+      </section>
+
+      <section>
+        <h3>Text Around Edge</h3>
+        <label>
+          <input
+            type="checkbox"
+            checked={config.addText}
+            onChange={(e) => handleChange('addText', e.target.checked)}
+          />
+          Add Text Around Circle
+        </label>
+        {config.addText && (
+          <>
+            <label>
+              Text:
+              <input
+                type="text"
+                value={config.textContent}
+                onChange={(e) => handleChange('textContent', e.target.value)}
+                placeholder="Enter text..."
+                maxLength={50}
+              />
+            </label>
+            <label>
+              Text Size:
+              <input
+                type="range"
+                value={config.textSize}
+                onChange={(e) => handleChange('textSize', parseFloat(e.target.value))}
+                min="5"
+                max="20"
+                step="0.5"
+              />
+              <span>{config.textSize.toFixed(1)}%</span>
+            </label>
+            <label>
+              Text Height (emboss):
+              <input
+                type="range"
+                value={config.textDepth}
+                onChange={(e) => handleChange('textDepth', parseFloat(e.target.value))}
+                min="0"
+                max="1"
+                step="0.05"
+              />
+              <span>{(config.textDepth * 100).toFixed(0)}%</span>
+            </label>
+          </>
+        )}
       </section>
 
       <section>

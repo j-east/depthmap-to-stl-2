@@ -23,8 +23,18 @@ const defaultConfig: DepthMapConfig = {
   cropHeight: 1.0,
   flipHorizontal: false,
   flipVertical: false,
-  rotate180: true,
+  rotate180: false,
   resolution: 10,
+  addHangingLoop: false,
+  loopDiameter: 3,
+  loopHeight: 3,
+  loopOffset: 2,
+  addText: false,
+  topText: '',
+  bottomText: '',
+  textSize: 10,
+  textDepth: 1.0,
+  textSpacing: 1.0,
 };
 
 function App() {

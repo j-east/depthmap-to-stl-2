@@ -27,6 +27,20 @@ export interface DepthMapConfig {
 
   // Quality
   resolution: number; // pixels per mm
+
+  // Hanging loop
+  addHangingLoop: boolean;
+  loopDiameter: number; // diameter of the loop hole in mm
+  loopHeight: number; // depth of the hole in mm
+  loopOffset: number; // distance from the top edge in mm
+
+  // Text overlay
+  addText: boolean;
+  topText: string;
+  bottomText: string;
+  textSize: number; // font size as percentage of image size
+  textDepth: number; // 0-1, how bright/raised the text should be
+  textSpacing: number; // character spacing multiplier (0.8-2.0)
 }
 
 export interface ImageData {
