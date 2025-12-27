@@ -498,14 +498,14 @@ export default function Controls({
       </section>
 
       <section>
-        <h3>Hanging Loop</h3>
+        <h3>hanger hole</h3>
         <label>
           <input
             type="checkbox"
             checked={config.addHangingLoop}
             onChange={(e) => handleChange('addHangingLoop', e.target.checked)}
           />
-          Add Hanging Loop
+          Add hanger hole
         </label>
         {config.addHangingLoop && (
           <>

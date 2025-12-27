@@ -46,7 +46,7 @@ export interface DepthMapConfig {
   // Quality
   resolution: number; // pixels per mm
 
-  // Hanging loop
+  // hanger hole
   addHangingLoop: boolean;
   loopDiameter: number; // diameter of the loop hole in mm
   loopHeight: number; // depth of the hole in mm

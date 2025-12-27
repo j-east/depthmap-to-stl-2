@@ -248,7 +248,7 @@ export function generateMesh(
     }
   }
 
-  // Calculate hole position if hanging loop is enabled
+  // Calculate hole position if hanger hole is enabled
   let holeX = 0;
   let holeY = 0;
   let holeRadius = 0;
@@ -364,7 +364,7 @@ export function generateMesh(
   // Build walls (side faces)
   addWalls(vertices, indices, vertexMap, heightMap, width, height, bottomVertexOffset, baseHeight, physicalWidth, physicalHeight, config);
 
-  // Add hanging loop if enabled
+  // Add hanger hole if enabled
   if (config.addHangingLoop) {
     addHangingLoop(vertices, indices, heightMap, width, height, physicalWidth, physicalHeight, config);
   }
