@@ -36,6 +36,7 @@ import { useState, useEffect } from 'react';
 import { DepthMapConfig } from '../types';
 import {
   generateAIDepthMap,
+  generateAIImage,
   initiatePKCEFlow,
   exchangeCodeForToken,
   getStoredAccessToken,
@@ -51,6 +52,7 @@ interface ControlsProps {
   hasSourceImage: boolean;
   hasDepthMap: boolean;
   hasMesh: boolean;
+  sourceImageFile: File | null;
 }
 
 export default function Controls({
@@ -62,12 +64,18 @@ export default function Controls({
   hasSourceImage,
   hasDepthMap,
   hasMesh,
+  sourceImageFile: externalSourceImageFile,
 }: ControlsProps) {
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
-  const [sourceImageFile, setSourceImageFile] = useState<File | null>(null);
+  const [internalSourceImageFile, setInternalSourceImageFile] = useState<File | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
+  const [imagePrompt, setImagePrompt] = useState('');
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+
+  // Use external file if provided, otherwise use internal
+  const sourceImageFile = externalSourceImageFile || internalSourceImageFile;
 
   // Check for existing access token on mount
   useEffect(() => {
@@ -113,6 +121,42 @@ export default function Controls({
   const handleLogout = () => {
     clearAccessToken();
     setIsAuthenticated(false);
+  };
+
+  const handleGenerateAIImage = async () => {
+    if (!imagePrompt.trim()) {
+      setAiError('Please enter an image description');
+      return;
+    }
+
+    if (!isAuthenticated) {
+      setAiError('Please authenticate with OpenRouter first');
+      return;
+    }
+
+    setIsGeneratingImage(true);
+    setAiError(null);
+
+    try {
+      console.log('Generating AI image from prompt...');
+      const imageDataUrl = await generateAIImage(imagePrompt);
+      console.log('AI image generated, loading image...');
+
+      // Convert the data URL to a File object for consistency
+      const response = await fetch(imageDataUrl);
+      const blob = await response.blob();
+      const imageFile = new File([blob], 'ai-generated-image.png', { type: 'image/png' });
+
+      // Upload the generated image as the source image
+      setInternalSourceImageFile(imageFile);
+      onSourceImageUpload(imageFile);
+      console.log('AI image loaded successfully');
+    } catch (error) {
+      console.error('Error generating AI image:', error);
+      setAiError(error instanceof Error ? error.message : 'Failed to generate AI image');
+    } finally {
+      setIsGeneratingImage(false);
+    }
   };
 
   const handleGenerateAIDepthMap = async () => {
@@ -162,11 +206,68 @@ export default function Controls({
           onChange={(e) => {
             const file = e.target.files?.[0];
             if (file) {
-              setSourceImageFile(file);
+              setInternalSourceImageFile(file);
               onSourceImageUpload(file);
             }
           }}
         />
+
+        <div style={{ margin: '16px 0', textAlign: 'center', color: '#666', fontSize: '0.9em' }}>
+          - OR -
+        </div>
+
+        <label>
+          Generate with AI:
+          <input
+            type="text"
+            value={imagePrompt}
+            onChange={(e) => setImagePrompt(e.target.value)}
+            placeholder="Describe the image you're thinking..."
+            style={{
+              width: '100%',
+              padding: '8px',
+              marginTop: '4px',
+              background: '#2a2a2a',
+              border: '1px solid #444',
+              borderRadius: '4px',
+              color: '#fff',
+              fontSize: '0.9em'
+            }}
+            disabled={!isAuthenticated}
+            onKeyPress={(e) => {
+              if (e.key === 'Enter' && isAuthenticated && imagePrompt.trim()) {
+                handleGenerateAIImage();
+              }
+            }}
+          />
+        </label>
+
+        {isAuthenticated && (
+          <button
+            onClick={handleGenerateAIImage}
+            disabled={!imagePrompt.trim() || isGeneratingImage}
+            style={{
+              marginTop: '8px',
+              width: '100%',
+              padding: '8px',
+              background: imagePrompt.trim() && !isGeneratingImage ? '#4a7c59' : '#333',
+              border: 'none',
+              borderRadius: '4px',
+              color: '#fff',
+              cursor: imagePrompt.trim() && !isGeneratingImage ? 'pointer' : 'not-allowed',
+              fontSize: '0.9em'
+            }}
+          >
+            {isGeneratingImage ? 'Generating Image...' : 'Generate Image (1:1)'}
+          </button>
+        )}
+
+        {!isAuthenticated && (
+          <p style={{ fontSize: '0.8em', color: '#666', marginTop: '8px' }}>
+            Sign in with OpenRouter below to generate images
+          </p>
+        )}
+
         {hasSourceImage && (
           <p style={{ fontSize: '0.8em', color: '#5a9e6f', marginTop: '8px' }}>
             ✓ Source image loaded

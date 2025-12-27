@@ -30,11 +30,12 @@
  * FINGERPRINT: Unique identifiers embedded for forensic tracking of copies.
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
 import { MeshData, DepthMapConfig } from '../types';
+import ImageCropper from './ImageCropper';
 
 interface STLViewerProps {
   sourceImage: HTMLImageElement | null;
@@ -42,6 +43,9 @@ interface STLViewerProps {
   meshData: MeshData | null;
   config: DepthMapConfig;
   activeTab: 'images' | 'output';
+  onSourceImageUpdate: (image: HTMLImageElement) => void;
+  onUndoChanges: () => void;
+  hasOriginalImage: boolean;
 }
 
 function MeshModel({ meshData, config }: { meshData: MeshData; config: DepthMapConfig }) {
@@ -95,7 +99,19 @@ function MeshModel({ meshData, config }: { meshData: MeshData; config: DepthMapC
   );
 }
 
-export default function STLViewer({ sourceImage, depthMapImage, meshData, config, activeTab }: STLViewerProps) {
+export default function STLViewer({ sourceImage, depthMapImage, meshData, config, activeTab, onSourceImageUpdate, onUndoChanges, hasOriginalImage }: STLViewerProps) {
+  const [isCropping, setIsCropping] = useState(false);
+  const imageContainerRef = useRef<HTMLDivElement>(null);
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+  const cropperApplyRef = useRef<(() => void) | null>(null);
+  const cropperResetRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    if (imageContainerRef.current && isCropping) {
+      const rect = imageContainerRef.current.getBoundingClientRect();
+      setContainerSize({ width: rect.width, height: rect.height });
+    }
+  }, [isCropping]);
   // Show output tab - 3D mesh
   if (activeTab === 'output' && meshData) {
     return (
@@ -128,33 +144,167 @@ export default function STLViewer({ sourceImage, depthMapImage, meshData, config
     );
   }
 
+  const handleDownloadSourceImage = () => {
+    if (!sourceImage) return;
+
+    const link = document.createElement('a');
+    link.href = sourceImage.src;
+    link.download = 'source-image.png';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleCropComplete = (croppedImage: HTMLImageElement) => {
+    onSourceImageUpdate(croppedImage);
+    setIsCropping(false);
+  };
+
+  const handleApplyCrop = () => {
+    if (cropperApplyRef.current) {
+      cropperApplyRef.current();
+    }
+  };
+
+  const handleResetCrop = () => {
+    if (cropperResetRef.current) {
+      cropperResetRef.current();
+    }
+  };
+
   // Show images tab - source and/or depth map
   if (activeTab === 'images') {
     if (sourceImage || depthMapImage) {
       return (
-        <div style={{
-          width: '100%',
-          height: '100%',
-          background: '#1a1a1a',
-          display: 'flex',
-          gap: '20px',
-          padding: '20px',
-          overflow: 'auto'
-        }}>
+        <>
+          <div style={{
+            width: '100%',
+            height: '100%',
+            background: '#1a1a1a',
+            display: 'flex',
+            gap: '20px',
+            padding: '20px',
+            overflow: 'auto'
+          }}>
           {sourceImage && (
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <h3 style={{ color: '#aaa', fontSize: '14px', textTransform: 'uppercase', letterSpacing: '1px' }}>
-                Source Image
-              </h3>
-              <div style={{
-                flex: 1,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                background: '#0f0f0f',
-                borderRadius: '8px',
-                overflow: 'hidden'
-              }}>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '10px', position: 'relative' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h3 style={{ color: '#aaa', fontSize: '14px', textTransform: 'uppercase', letterSpacing: '1px', margin: 0 }}>
+                  Source Image
+                </h3>
+                {!isCropping ? (
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    {hasOriginalImage && (
+                      <button
+                        onClick={onUndoChanges}
+                        style={{
+                          padding: '6px 12px',
+                          background: '#7d5a6c',
+                          border: 'none',
+                          borderRadius: '4px',
+                          color: '#fff',
+                          cursor: 'pointer',
+                          fontSize: '0.85em',
+                          fontWeight: '500'
+                        }}
+                      >
+                        Undo Changes
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setIsCropping(true)}
+                      style={{
+                        padding: '6px 12px',
+                        background: '#5a6c7d',
+                        border: 'none',
+                        borderRadius: '4px',
+                        color: '#fff',
+                        cursor: 'pointer',
+                        fontSize: '0.85em',
+                        fontWeight: '500'
+                      }}
+                    >
+                      Crop
+                    </button>
+                    <button
+                      onClick={handleDownloadSourceImage}
+                      style={{
+                        padding: '6px 12px',
+                        background: '#4a7c59',
+                        border: 'none',
+                        borderRadius: '4px',
+                        color: '#fff',
+                        cursor: 'pointer',
+                        fontSize: '0.85em',
+                        fontWeight: '500'
+                      }}
+                    >
+                      Download
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      onClick={handleResetCrop}
+                      style={{
+                        padding: '6px 12px',
+                        background: '#7d6c5a',
+                        border: 'none',
+                        borderRadius: '4px',
+                        color: '#fff',
+                        cursor: 'pointer',
+                        fontSize: '0.85em',
+                        fontWeight: '500'
+                      }}
+                    >
+                      Reset
+                    </button>
+                    <button
+                      onClick={handleApplyCrop}
+                      style={{
+                        padding: '6px 12px',
+                        background: '#4a7c59',
+                        border: 'none',
+                        borderRadius: '4px',
+                        color: '#fff',
+                        cursor: 'pointer',
+                        fontSize: '0.85em',
+                        fontWeight: '500'
+                      }}
+                    >
+                      Apply Crop
+                    </button>
+                    <button
+                      onClick={() => setIsCropping(false)}
+                      style={{
+                        padding: '6px 12px',
+                        background: '#444',
+                        border: 'none',
+                        borderRadius: '4px',
+                        color: '#fff',
+                        cursor: 'pointer',
+                        fontSize: '0.85em',
+                        fontWeight: '500'
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div
+                ref={imageContainerRef}
+                style={{
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: '#0f0f0f',
+                  borderRadius: '8px',
+                  overflow: 'hidden',
+                  position: 'relative'
+                }}
+              >
                 <img
                   src={sourceImage.src}
                   alt="Source"
@@ -164,6 +314,16 @@ export default function STLViewer({ sourceImage, depthMapImage, meshData, config
                     objectFit: 'contain'
                   }}
                 />
+                {isCropping && containerSize.width > 0 && (
+                  <ImageCropper
+                    image={sourceImage}
+                    containerWidth={containerSize.width}
+                    containerHeight={containerSize.height}
+                    onCropComplete={handleCropComplete}
+                    applyRef={cropperApplyRef}
+                    resetRef={cropperResetRef}
+                  />
+                )}
               </div>
             </div>
           )}
@@ -193,7 +353,8 @@ export default function STLViewer({ sourceImage, depthMapImage, meshData, config
               </div>
             </div>
           )}
-        </div>
+          </div>
+        </>
       );
     }
 

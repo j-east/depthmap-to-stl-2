@@ -69,16 +69,54 @@ const defaultConfig: DepthMapConfig = {
 function App() {
   const [config, setConfig] = useState<DepthMapConfig>(defaultConfig);
   const [sourceImage, setSourceImage] = useState<HTMLImageElement | null>(null);
+  const [sourceImageFile, setSourceImageFile] = useState<File | null>(null);
+  const [originalSourceImage, setOriginalSourceImage] = useState<HTMLImageElement | null>(null);
+  const [originalSourceImageFile, setOriginalSourceImageFile] = useState<File | null>(null);
   const [depthMapImage, setDepthMapImage] = useState<HTMLImageElement | null>(null);
   const [meshData, setMeshData] = useState<MeshData | null>(null);
   const [activeTab, setActiveTab] = useState<'images' | 'output'>('images');
 
+  // Restore state from localStorage on mount
+  useEffect(() => {
+    const savedSourceImage = localStorage.getItem('app_source_image');
+    const savedDepthMapImage = localStorage.getItem('app_depth_map_image');
+
+    if (savedSourceImage) {
+      const img = new Image();
+      img.onload = () => setSourceImage(img);
+      img.src = savedSourceImage;
+    }
+
+    if (savedDepthMapImage) {
+      const img = new Image();
+      img.onload = () => setDepthMapImage(img);
+      img.src = savedDepthMapImage;
+    }
+  }, []);
+
+  // Save source image to localStorage whenever it changes
+  useEffect(() => {
+    if (sourceImage) {
+      localStorage.setItem('app_source_image', sourceImage.src);
+    }
+  }, [sourceImage]);
+
+  // Save depth map to localStorage whenever it changes
+  useEffect(() => {
+    if (depthMapImage) {
+      localStorage.setItem('app_depth_map_image', depthMapImage.src);
+    }
+  }, [depthMapImage]);
+
   const handleSourceImageUpload = useCallback((file: File) => {
+    setSourceImageFile(file);
+    setOriginalSourceImageFile(file); // Store as original
     const reader = new FileReader();
     reader.onload = (e) => {
       const img = new Image();
       img.onload = () => {
         setSourceImage(img);
+        setOriginalSourceImage(img); // Store as original
         // Clear depth map and mesh when new source is uploaded
         setDepthMapImage(null);
         setMeshData(null);
@@ -132,6 +170,28 @@ function App() {
     exportSTL(meshData, 'depthmap-model.stl');
   }, [meshData]);
 
+  const handleSourceImageUpdate = useCallback(async (image: HTMLImageElement) => {
+    setSourceImage(image);
+    // Convert image to File for the Controls component
+    const response = await fetch(image.src);
+    const blob = await response.blob();
+    const file = new File([blob], 'cropped-image.png', { type: 'image/png' });
+    setSourceImageFile(file);
+    // Clear depth map and mesh when source is updated
+    setDepthMapImage(null);
+    setMeshData(null);
+  }, []);
+
+  const handleUndoChanges = useCallback(() => {
+    if (originalSourceImage && originalSourceImageFile) {
+      setSourceImage(originalSourceImage);
+      setSourceImageFile(originalSourceImageFile);
+      // Clear depth map and mesh when reverting
+      setDepthMapImage(null);
+      setMeshData(null);
+    }
+  }, [originalSourceImage, originalSourceImageFile]);
+
   return (
     <div className="app">
       <div className="sidebar">
@@ -144,6 +204,7 @@ function App() {
           hasSourceImage={!!sourceImage}
           hasDepthMap={!!depthMapImage}
           hasMesh={!!meshData}
+          sourceImageFile={sourceImageFile}
         />
       </div>
       <div className="viewer">
@@ -169,6 +230,9 @@ function App() {
             meshData={meshData}
             config={config}
             activeTab={activeTab}
+            onSourceImageUpdate={handleSourceImageUpdate}
+            onUndoChanges={handleUndoChanges}
+            hasOriginalImage={!!originalSourceImage && sourceImage !== originalSourceImage}
           />
         </div>
       </div>

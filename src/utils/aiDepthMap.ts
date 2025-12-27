@@ -241,3 +241,64 @@ export async function loadImageFromDataUrl(dataUrl: string): Promise<HTMLImageEl
     img.src = dataUrl;
   });
 }
+
+export async function generateAIImage(
+  prompt: string,
+  accessToken?: string,
+  apiEndpoint: string = 'https://openrouter.ai/api/v1/chat/completions'
+): Promise<string> {
+  // Use provided token or get from storage
+  const token = accessToken || getStoredAccessToken();
+
+  if (!token) {
+    throw new Error('No access token available. Please authenticate first.');
+  }
+
+  const requestBody = {
+    model: 'google/gemini-3-pro-image-preview',
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: `Generate a 1:1 aspect ratio image: ${prompt}`
+          }
+        ]
+      }
+    ]
+  };
+
+  const response = await fetch(apiEndpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+      'HTTP-Referer': window.location.origin,
+      'X-Title': 'Depthmap to STL Converter',
+    },
+    body: JSON.stringify(requestBody),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`API request failed: ${response.status} ${response.statusText}\n${errorText}`);
+  }
+
+  const data: AIDepthMapResponse = await response.json();
+
+  // Extract the image from the response
+  if (data.choices?.[0]?.message?.images?.[0]?.image_url?.url) {
+    return data.choices[0].message.images[0].image_url.url;
+  }
+
+  // Fallback: check if content has image data
+  if (data.choices?.[0]?.message?.content) {
+    // If content contains a data URI, return it
+    if (data.choices[0].message.content.startsWith('data:image/')) {
+      return data.choices[0].message.content;
+    }
+  }
+
+  throw new Error('No image data found in API response');
+}
