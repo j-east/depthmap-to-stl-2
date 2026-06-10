@@ -23,11 +23,14 @@ M_PER_PX = 8.46         # source grid resolution (meters per px)
 d = json.load(open(LANES))
 MM_PER_PX = d["mm_per_px"]
 cx0, cy0, cx1, cy1 = d.get("crop_px", [0, 0, d["grid"][0], d["grid"][1]])
+SRC = d.get("src_file", SRC)
+M_PER_PX = d.get("src_m_per_px", M_PER_PX)
+DATUM_M = d.get("datum_m", 0.0)
 DECIM = max(1, round(0.4 / MM_PER_PX))          # ~0.4 mm mesh resolution
 Z_PER_M = MM_PER_PX / M_PER_PX * EXAG           # mm of height per meter of elevation
 
 a = np.array(Image.open(SRC), dtype=np.float64)
-a = np.where(a < -1e30, 0.0, a)
+a = np.where(a < -1e30, DATUM_M, a) - DATUM_M
 H, W = a.shape
 el = a[cy0:cy1:DECIM, cx0:cx1:DECIM]            # the crop IS the board
 ny, nx = el.shape

@@ -15,8 +15,15 @@ from scipy.ndimage import uniform_filter1d
 
 Image.MAX_IMAGE_PIXELS = None
 
-SRC = "data/foxisles_cudem.tif"
-MINLON, MAXLON, MINLAT, MAXLAT = -68.95, -68.44, 43.98, 44.36
+import os
+REGION = {"bbox": [-68.95, 43.98, -68.44, 44.36], "src_file": "data/foxisles_cudem.tif",
+          "src_m_per_px": 8.46, "datum_m": 0}
+if os.path.exists("data/region.json"):
+    REGION.update(json.load(open("data/region.json")))
+SRC = REGION["src_file"]
+MINLON, MINLAT, MAXLON, MAXLAT = REGION["bbox"]
+M_SRC = REGION["src_m_per_px"]
+DATUM_M = REGION["datum_m"]
 
 # circumnavigation waypoints (lon, lat) — Dijkstra fills in the weave
 WAYPOINTS = [
@@ -53,7 +60,7 @@ if os.path.exists("data/waypoints.json"):
 def render_base():
     """Hillshade + bathymetry + coastline + landmarks; also saves data/basemap.png."""
     land = ~water
-    gy, gx = np.gradient(a, 8.46, 8.46)
+    gy, gx = np.gradient(a, M_SRC, M_SRC)
     slope = np.arctan(np.hypot(gx, gy)); aspect = np.arctan2(-gx, gy)
     azr, altr = math.radians(315), math.radians(45)
     hs = np.clip(np.sin(altr) * np.cos(slope) +
@@ -126,7 +133,7 @@ N_GROUPS = 24                     # 24 x 5 = 120 holes, once around
 a = np.array(Image.open(SRC), dtype=np.float64)
 nodata = (a < -1e30) | np.isnan(a)
 print(f"grid {a.shape[1]}x{a.shape[0]}, nodata {100*nodata.sum()/a.size:.2f}%")
-a = np.where(nodata, 0.5, a)  # nodata -> land (impassable) so routes stay in known water
+a = np.where(nodata, 0.5, a - DATUM_M)  # datum-relative; nodata -> land (impassable)
 H, W = a.shape
 water = a <= 0
 
@@ -222,7 +229,7 @@ rx, ry = np.interp(u, s, fx), np.interp(u, s, fy)
 # enforce the minimum bend radius, then re-resample evenly
 rx, ry = enforce_min_radius(rx, ry, MIN_RADIUS_MM / MM_PER_PX)
 d = np.hypot(np.diff(rx), np.diff(ry)); s = np.concatenate([[0], np.cumsum(d)])
-total = s[-1]; print(f"route length {total:.0f} px = {total*8.46/1000:.1f} km real "
+total = s[-1]; print(f"route length {total:.0f} px = {total*M_SRC/1000:.1f} km real "
                      f"= {total*MM_PER_PX:.0f} mm on board")
 u = np.arange(0, total, 3.0)
 rx, ry = np.interp(u, s, rx), np.interp(u, s, ry)
@@ -433,7 +440,8 @@ json.dump({"lanes": [[list(map(float, l[0])), list(map(float, l[1]))] for l in l
            "holes": [[(float(x), float(y)) for x, y in hl] for hl in holes],
            "bbox": [MINLON, MINLAT, MAXLON, MAXLAT], "grid": [W, H],
            "mm_per_px": MM_PER_PX, "crop_px": [cx0, cy0, cx1, cy1],
-           "labels": labels,
+           "labels": labels, "datum_m": DATUM_M, "src_file": SRC,
+           "src_m_per_px": M_SRC,
            "spec": {"lane_sp_mm": LANE_SP_MM, "hole_step_mm": hole_step * MM_PER_PX,
                     "hole_dia_mm": 3.2,
                     "board_mm": [(cx1 - cx0) * MM_PER_PX, (cy1 - cy0) * MM_PER_PX]}},
@@ -460,6 +468,32 @@ except Exception:
 for lb in labels:
     draw.text((lb["x"], lb["y"]), lb["text"], fill=(255, 255, 255), font=_font,
               anchor="mm", stroke_width=3, stroke_fill=(0, 0, 0))
+
+# map garnish from fetch_features.py, if present
+if os.path.exists("data/features.json"):
+    feats = json.load(open("data/features.json"))
+    def _f(size_mm):
+        try:
+            from PIL import ImageFont as _IF
+            return _IF.truetype("/System/Library/Fonts/Helvetica.ttc",
+                                max(10, int(size_mm / MM_PER_PX)))
+        except Exception:
+            return None
+    for path in feats.get("roads", []):
+        pts = [lonlat_to_px(lon, lat) for lon, lat in path]
+        draw.line(pts, fill=(75, 70, 65), width=max(2, int(0.5 / MM_PER_PX)), joint="curve")
+    for b in feats.get("buoys", []):
+        x, y = lonlat_to_px(b["lon"], b["lat"])
+        r = 0.8 / MM_PER_PX
+        draw.ellipse([x - r, y - r, x + r, y + r], fill=(250, 250, 250), outline=(0, 0, 0))
+    for kind, size, fill in [("places", 2.6, (255, 255, 255)),
+                             ("islands", 2.0, (235, 235, 215)),
+                             ("bays", 1.8, (170, 215, 240))]:
+        fnt = _f(size)
+        for p in feats.get(kind, []):
+            x, y = lonlat_to_px(p["lon"], p["lat"])
+            draw.text((x, y), p["name"], fill=fill, font=fnt, anchor="mm",
+                      stroke_width=2, stroke_fill=(0, 0, 0))
 board = pim.crop((cx0, cy0, cx1, cy1))
 board.save("data/board_preview.png")
 print("wrote data/board_preview.png", board.size)

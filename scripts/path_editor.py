@@ -16,8 +16,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PORT = 8765
-# must match route_prototype.py
-MINLON, MAXLON, MINLAT, MAXLAT = -68.95, -68.44, 43.98, 44.36
+# region config (must match route_prototype.py)
+_reg = {"bbox": [-68.95, 43.98, -68.44, 44.36]}
+try:
+    _reg.update(json.load(open(os.path.join(ROOT, "data/region.json"))))
+except Exception:
+    pass
+MINLON, MINLAT, MAXLON, MAXLAT = _reg["bbox"]
 
 run_lock = threading.Lock()
 

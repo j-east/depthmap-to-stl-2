@@ -21,9 +21,10 @@ SRC = "data/foxisles_cudem.tif"
 LANES = "data/route_lanes.json"
 OUT = "data/deer_isle_board.3mf"
 
-BASE_MM = 10.0       # sea-level height (land rises above, seafloor dips below)
+BASE_MM = 10.0       # datum height (land rises above, water floor dips below)
 EXAG = 5.0           # vertical exaggeration
 Z_FLOOR = 3.0        # deepest the seafloor may cut into the slab (mm)
+SHORE_MM = 0.16      # one-layer shoreline accent ring at the waterline
 M_PER_PX = 8.46      # source grid meters per px
 PITCH_B = 0.35       # base mesh pitch (mm)
 PITCH_F = 0.15       # ribbon/label mesh pitch (mm)
@@ -39,12 +40,15 @@ TEXT_MM = 3.2        # label text height (mm)
 d = json.load(open(LANES))
 MMPP = d["mm_per_px"]
 cx0, cy0, cx1, cy1 = d["crop_px"]
+SRC = d.get("src_file", SRC)
+M_PER_PX = d.get("src_m_per_px", M_PER_PX)
+DATUM_M = d.get("datum_m", 0.0)
 BW = (cx1 - cx0) * MMPP   # board width (mm)
 BH = (cy1 - cy0) * MMPP   # board height (mm)
 ZPM = MMPP / M_PER_PX * EXAG
 
 el_src = np.array(Image.open(SRC), dtype=np.float64)[cy0:cy1, cx0:cx1]
-el_src = np.where(el_src < -1e30, 0.0, el_src)
+el_src = np.where(el_src < -1e30, DATUM_M, el_src) - DATUM_M  # datum-relative
 
 def px_to_mm(px, py):
     return (np.asarray(px) - cx0) * MMPP, (cy1 - np.asarray(py)) * MMPP
@@ -127,18 +131,24 @@ for hx, hy in holes_mm:
     bore = dist <= HOLE_R
     ztop[rs:re, cs:ce][bore] = max(zpad - HOLE_DEPTH, 1.2)
 
-# ---- split the slab at the datum: everything below sea level is OCEAN
-# (its own object -> its own filament), land columns rise above it ----
+# ---- split the slab at the datum: ocean below, a one-layer shoreline ring
+# at the waterline, land above — three parts, three filaments ----
 zsea = np.minimum(ztop, BASE_MM)
 V_sea, F_sea = block_mesh(np.ones((nyb, nxb), bool), zsea,
                           np.zeros_like(ztop), PITCH_B)
+cmax = np.maximum(np.maximum(ztop[:-1, :-1], ztop[:-1, 1:]),
+                  np.maximum(ztop[1:, :-1], ztop[1:, 1:]))
 cmin = np.minimum(np.minimum(ztop[:-1, :-1], ztop[:-1, 1:]),
                   np.minimum(ztop[1:, :-1], ztop[1:, 1:]))
-land_mask = cmin > BASE_MM + 0.02
-V_land, F_land = block_mesh(land_mask, np.maximum(ztop, BASE_MM),
-                            np.full_like(ztop, BASE_MM), PITCH_B)
+shore_mask = cmax > BASE_MM + 0.001
+V_sh, F_sh = block_mesh(shore_mask, np.clip(ztop, BASE_MM, BASE_MM + SHORE_MM),
+                        np.full_like(ztop, BASE_MM), PITCH_B)
+land_mask = cmin > BASE_MM + SHORE_MM + 0.02
+V_land, F_land = block_mesh(land_mask, np.maximum(ztop, BASE_MM + SHORE_MM),
+                            np.full_like(ztop, BASE_MM + SHORE_MM), PITCH_B)
 print(f"ocean: {len(V_sea):,} verts, {len(F_sea):,} tris "
-      f"({BW:.0f} x {BH:.0f} mm, seafloor down to {zsea.min():.1f} mm)")
+      f"({BW:.0f} x {BH:.0f} mm, floor down to {zsea.min():.1f} mm)")
+print(f"shore: {len(V_sh):,} verts, {len(F_sh):,} tris (one {SHORE_MM} mm layer at the waterline)")
 print(f"land:  {len(V_land):,} verts, {len(F_land):,} tris "
       f"(relief to {ztop.max():.1f} mm)")
 
@@ -170,25 +180,70 @@ def lane_mask(k):
         dr.ellipse([px_ - rcut, py_ - rcut, px_ + rcut, py_ + rcut], fill=0)
     return img
 
+FEATS = {}
+import os as _os
+if _os.path.exists("data/features.json"):
+    FEATS = json.load(open("data/features.json"))
+
+def ll_to_mm(lon, lat):
+    bx = d["bbox"]; GW, GH = d["grid"]
+    px_ = (lon - bx[0]) / (bx[2] - bx[0]) * GW
+    py_ = (bx[3] - lat) / (bx[3] - bx[1]) * GH
+    return px_to_mm(px_, py_)
+
+def _font(size_mm):
+    try:
+        return ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc",
+                                  int(size_mm / PITCH_F))
+    except Exception:
+        return ImageFont.load_default()
+
+def stamp_text(img, text, x_mm, y_mm, size_mm, ang=0.0):
+    font = _font(size_mm)
+    w = int(len(text) * size_mm / PITCH_F) + 60
+    stamp = Image.new("1", (w, int(2.2 * size_mm / PITCH_F)), 0)
+    sd = ImageDraw.Draw(stamp)
+    sd.text((stamp.width // 2, stamp.height // 2), text, fill=1, font=font, anchor="mm")
+    if ang:
+        stamp = stamp.rotate(ang, expand=True, fillcolor=0)
+    img.paste(1, (int(x_mm / PITCH_F - stamp.width / 2),
+                  int((BH - y_mm) / PITCH_F - stamp.height / 2)), stamp)
+
 def labels_mask():
     img = Image.new("1", (nxf, nyf), 0)
-    try:
-        font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc",
-                                  int(TEXT_MM / PITCH_F))
-    except Exception:
-        font = ImageFont.load_default()
+    dr = ImageDraw.Draw(img)
     for lb in d.get("labels", []):
         ang = ((lb["angle"] + 90) % 180) - 90  # keep text upright-ish
-        stamp = Image.new("1", (300, 120), 0)
-        sd = ImageDraw.Draw(stamp)
-        sd.text((150, 60), lb["text"], fill=1, font=font, anchor="mm")
-        stamp = stamp.rotate(ang, expand=True, fillcolor=0)
         x_mm, y_mm = px_to_mm(lb["x"], lb["y"])
-        px_, py_ = int(x_mm / PITCH_F - stamp.width / 2), int((BH - y_mm) / PITCH_F - stamp.height / 2)
-        img.paste(1, (px_, py_), stamp)
+        stamp_text(img, lb["text"], x_mm, y_mm, TEXT_MM, ang)
+    # map garnish: place/island/water names + buoy dots
+    for kind, size in [("places", 2.6), ("islands", 2.0), ("bays", 1.8)]:
+        for p in FEATS.get(kind, []):
+            x_mm, y_mm = ll_to_mm(p["lon"], p["lat"])
+            if 2 < x_mm < BW - 2 and 2 < y_mm < BH - 2:
+                stamp_text(img, p["name"], x_mm, y_mm, size)
+    rb = int(0.8 / PITCH_F)
+    for b in FEATS.get("buoys", []):
+        x_mm, y_mm = ll_to_mm(b["lon"], b["lat"])
+        px_, py_ = x_mm / PITCH_F, (BH - y_mm) / PITCH_F
+        dr.ellipse([px_ - rb, py_ - rb, px_ + rb, py_ + rb], fill=1)
+    return img
+
+def roads_mask():
+    img = Image.new("1", (nxf, nyf), 0)
+    dr = ImageDraw.Draw(img)
+    wpx = max(2, int(0.5 / PITCH_F))
+    for path in FEATS.get("roads", []):
+        pts = []
+        for lon, lat in path:
+            x_mm, y_mm = ll_to_mm(lon, lat)
+            pts.append((x_mm / PITCH_F, (BH - y_mm) / PITCH_F))
+        if len(pts) > 1:
+            dr.line(pts, fill=1, width=wpx, joint="curve")
     return img
 
 objects = [("ocean", "#2E6FA3", V_sea, F_sea),
+           ("shoreline", "#E2CF9C", V_sh, F_sh),
            ("land", "#6B7F5E", V_land, F_land)]
 for k, (name, color) in enumerate([("lane_red", "#E03232"),
                                    ("lane_gold", "#F0C832"),
@@ -201,6 +256,10 @@ lm = mask_mesh(labels_mask())
 if lm:
     objects.append(("labels", "#F5F5F0", *lm))
     print(f"labels: {len(lm[0]):,} verts, {len(lm[1]):,} tris")
+rm = mask_mesh(roads_mask(), proud=0.22, embed=0.10)
+if rm:
+    objects.append(("roads", "#4A4A4A", *rm))
+    print(f"roads: {len(rm[0]):,} verts, {len(rm[1]):,} tris")
 
 # ---------------- write 3MF ----------------
 def obj_xml(oid, name, color, V, F):

@@ -18,6 +18,7 @@ dist-ssr
 .pydeps/
 data/*
 !data/waypoints.json
+!data/region.json
 
 # Editor directories and files
 .vscode/*
