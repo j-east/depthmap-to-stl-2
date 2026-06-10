@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# cribbage pipeline: local python deps + regenerable artifacts
+# (DEMs re-download via the NOAA URL in scripts/; meshes rebuild from
+# data/waypoints.json, which IS tracked — it's the hand-drawn course)
+.pydeps/
+data/*
+!data/waypoints.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

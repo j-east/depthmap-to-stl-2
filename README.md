@@ -55,3 +55,27 @@ npm run build
 
 ### Quality
 - **Resolution**: Pixels per millimeter (higher = more detail)
+
+## Cribbage Board Pipeline (`scripts/`)
+
+A separate Python pipeline that turns NOAA CUDEM topobathy data (Deer Isle /
+Penobscot Bay, Maine) into a 3-player cribbage board: real terrain and
+bathymetry at 5x exaggeration, a hand-drawn 3-lane course with 121 holes per
+lane, and a multicolor 3MF for multi-material printers.
+
+```bash
+python3 scripts/path_editor.py       # browser course editor at localhost:8765
+python3 scripts/route_prototype.py   # course -> lanes/holes/labels (validated)
+python3 scripts/make_board_3mf.py    # -> data/deer_isle_board.3mf (6 colored parts)
+PYTHONPATH=.pydeps python3 scripts/make_terrain_stl.py  # plain terrain STL + renders
+```
+
+- The editor draws/crops the course over the real chart; the crop maps to a
+  255 mm board. Save & Re-route validates hole capacity and collisions.
+- `data/waypoints.json` (tracked) is the source of truth: the drawn course,
+  crop, and min bend radius. Everything else under `data/` regenerates.
+- DEM fetch: NOAA NCEI `DEM_all` ImageServer (CUDEM topobathy, ~3 m).
+- Output parts: ocean (below datum), land, 3 lane ribbons, labels — assign
+  one filament each in Bambu Studio.
+- Python deps: numpy/scipy/Pillow (system), matplotlib in `.pydeps/`
+  (`pip install --target .pydeps matplotlib`).
