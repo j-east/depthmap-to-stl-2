@@ -54,7 +54,10 @@ HTML = """<!DOCTYPE html>
   <div class="row">
     <button id="modeDraw">✏️ Draw</button>
     <button id="modeWp">📍 Waypoints</button>
+  </div>
+  <div class="row">
     <button id="modeCrop">▣ Crop</button>
+    <button id="modeLabels">🏷 Labels</button>
   </div>
   <p id="help"></p>
   <div class="row">
@@ -78,7 +81,8 @@ HTML = """<!DOCTYPE html>
 <script>
 const MINLON=%MINLON%, MAXLON=%MAXLON%, MINLAT=%MINLAT%, MAXLAT=%MAXLAT%;
 let wps=[], strokes=[], mode='draw', dragging=-1, drawing=false,
-    zoom=1, imgW=0, imgH=0, showingBase=false, crop=null, cropDrag=null;
+    zoom=1, imgW=0, imgH=0, showingBase=false, crop=null, cropDrag=null,
+    labs=[], labOverrides={}, labGrid=null, dragLabel=-1;
 const img=document.getElementById('map'), cv=document.getElementById('cv'),
       ctx=cv.getContext('2d'), status=document.getElementById('status'),
       wrap=document.getElementById('wrap'), stage=document.getElementById('stage'),
@@ -91,14 +95,19 @@ function setMode(m){ mode=m;
   document.getElementById('modeDraw').classList.toggle('on', m=='draw');
   document.getElementById('modeWp').classList.toggle('on', m=='wp');
   document.getElementById('modeCrop').classList.toggle('on', m=='crop');
+  document.getElementById('modeLabels').classList.toggle('on', m=='labels');
   help.innerHTML = m=='draw'
     ? '<b>Drag</b> to draw the course freehand. Each drag continues the line. '
       + 'The line is the path — land crossings allowed. Close the loop near your start.'
     : m=='wp'
     ? '<b>Click</b>: add waypoint (on a segment: insert)<br><b>Drag</b>: move • '
       + '<b>Right-click</b>: delete<br>The router finds water between points.'
-    : '<b>Drag</b> a rectangle: that area becomes the board, scaled to 255 mm '
-      + 'on its long side. Hole spacing is computed at board scale.';
+    : m=='crop'
+    ? '<b>Drag</b> a rectangle: that area becomes the board, scaled to 255 mm '
+      + 'on its long side. Hole spacing is computed at board scale.'
+    : '<b>Drag</b> a label to place it by hand (blue = hand-placed). '
+      + '<b>Right-click</b>: revert to automatic. The baked-in map text moves '
+      + 'after Save &amp; Re-route.';
   draw(); }
 function drawCrop(){
   const c = cropDrag || crop;
@@ -115,9 +124,30 @@ function drawCrop(){
   ctx.strokeRect(x0,y0,x1-x0,y1-y0);
   ctx.restore();
 }
+function labelBox(lb){
+  const [x,y]=ll2px([lb.lon,lb.lat]);
+  const s = imgW/(labGrid?labGrid[0]:imgW);
+  return [x, y, lb.hw*s, lb.hh*s];
+}
+function drawLabels(){
+  if(mode!='labels') return;
+  for(const lb of labs){
+    const [x,y,hw,hh]=labelBox(lb);
+    ctx.font='bold '+Math.max(8, 2*hh*0.9)+'px sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.strokeStyle='rgba(0,0,0,.85)'; ctx.lineWidth=Math.max(2,4/zoom);
+    ctx.strokeText(lb.text,x,y);
+    ctx.fillStyle = labOverrides[lb.text] ? '#7dd3fc' : '#ffffff';
+    ctx.fillText(lb.text,x,y);
+    ctx.strokeStyle = labOverrides[lb.text] ? 'rgba(125,211,252,.7)' : 'rgba(255,255,255,.35)';
+    ctx.lineWidth=Math.max(1,1.5/zoom);
+    ctx.strokeRect(x-hw,y-hh,2*hw,2*hh);
+  }
+}
 function draw(){
   ctx.clearRect(0,0,cv.width,cv.height);
   drawCrop();
+  drawLabels();
   const pts=wps.map(ll2px), lw=Math.max(1.2, 2.2/zoom);
   if(pts.length>1){
     ctx.strokeStyle='rgba(80,220,255,.9)'; ctx.lineWidth=lw;
@@ -156,7 +186,19 @@ function nearestSeg(x,y){ const pts=wps.map(ll2px); let best=-1, bd=Math.max(5,1
     let t=((x-ax)*(bx-ax)+(y-ay)*(by-ay))/L2; t=Math.max(0,Math.min(1,t));
     const d=Math.hypot(x-(ax+t*(bx-ax)), y-(ay+t*(by-ay)));
     if(d<bd){bd=d;best=i;} } return best; }
+function labelHit(x,y){
+  for(let i=labs.length-1;i>=0;i--){
+    const [lx,ly,hw,hh]=labelBox(labs[i]);
+    if(Math.abs(x-lx)<hw && Math.abs(y-ly)<hh) return i;
+  }
+  return -1;
+}
 cv.addEventListener('mousedown', e=>{ const [x,y]=evPos(e);
+  if(mode=='labels'){
+    const i=labelHit(x,y);
+    if(e.button==2){ if(i>=0){ delete labOverrides[labs[i].text]; draw(); } return; }
+    if(i>=0) dragLabel=i;
+    return; }
   if(mode=='crop'){
     if(e.button!=0) return;
     cropDrag=[...px2ll(x,y), ...px2ll(x,y)]; // temp [lon1,lat1,lon2,lat2]
@@ -172,6 +214,13 @@ cv.addEventListener('mousedown', e=>{ const [x,y]=evPos(e);
     else { wps.push(px2ll(x,y)); dragging=wps.length-1; } }
   draw(); });
 cv.addEventListener('mousemove', e=>{ const [x,y]=evPos(e);
+  if(mode=='labels'){
+    if(dragLabel>=0){
+      const ll=px2ll(x,y);
+      labs[dragLabel].lon=ll[0]; labs[dragLabel].lat=ll[1];
+      labOverrides[labs[dragLabel].text]=[ll[0],ll[1]];
+      draw(); }
+    return; }
   if(mode=='crop' && cropDrag){
     const [ax,ay]=cropDrag._anchor;
     const p1=px2ll(Math.min(ax,x),Math.min(ay,y)), p2=px2ll(Math.max(ax,x),Math.max(ay,y));
@@ -185,6 +234,7 @@ cv.addEventListener('mousemove', e=>{ const [x,y]=evPos(e);
     return; }
   if(dragging>=0){ wps[dragging]=px2ll(x,y); draw(); } });
 window.addEventListener('mouseup', ()=>{
+  dragLabel=-1;
   if(cropDrag){ if(Math.abs(cropDrag[2]-cropDrag[0])>1e-4) crop=cropDrag.slice(0,4);
     cropDrag=null; draw(); }
   if(drawing){ drawing=false;
@@ -194,14 +244,20 @@ window.addEventListener('mouseup', ()=>{
 cv.addEventListener('contextmenu', e=>e.preventDefault());
 function payload(){ return JSON.stringify({
   mode: mode=='wp' ? 'waypoints' : 'drawn', waypoints: wps, crop: crop,
+  label_overrides: labOverrides,
   min_radius_mm: parseFloat(document.getElementById('radius').value)||8 }); }
+async function loadLabels(){ try{
+  const r=await fetch('/labels'); const d=await r.json();
+  labs=d.labels||[]; labGrid=d.grid||null; draw(); }catch(e){} }
 async function load(){ const r=await fetch('/waypoints'); const d=await r.json();
   wps=d.waypoints||[]; strokes=[]; crop=d.crop||null;
+  labOverrides=d.label_overrides||{};
   if(d.min_radius_mm) document.getElementById('radius').value=d.min_radius_mm;
-  setMode(d.mode=='drawn'?'draw':'wp'); }
+  setMode(d.mode=='drawn'?'draw':'wp'); loadLabels(); }
 document.getElementById('modeDraw').onclick=()=>setMode('draw');
 document.getElementById('modeWp').onclick=()=>setMode('wp');
 document.getElementById('modeCrop').onclick=()=>setMode('crop');
+document.getElementById('modeLabels').onclick=()=>setMode('labels');
 document.getElementById('nocrop').onclick=()=>{ crop=null; draw(); };
 document.getElementById('zin').onclick=()=>setZoom(zoom*1.5, wrap.clientWidth/2, wrap.clientHeight/2);
 document.getElementById('zout').onclick=()=>setZoom(zoom/1.5, wrap.clientWidth/2, wrap.clientHeight/2);
@@ -220,7 +276,7 @@ document.getElementById('route').onclick = async ()=>{
   const r=await fetch('/run',{method:'POST',body:payload()});
   const out=await r.json();
   status.textContent=out.ok ? out.log : 'FAILED:\\n'+out.log;
-  showingBase=false; img.src='/map.png?'+Date.now(); };
+  showingBase=false; img.src='/map.png?'+Date.now(); loadLabels(); };
 let first=true;
 img.onload = ()=>{ imgW=img.naturalWidth; imgH=img.naturalHeight;
   cv.width=imgW; cv.height=imgH; if(first){ first=false; fit(); } draw(); };
@@ -259,6 +315,24 @@ class H(BaseHTTPRequestHandler):
         elif self.path == "/waypoints":
             p = os.path.join(ROOT, "data/waypoints.json")
             self._send(200, open(p).read() if os.path.exists(p) else '{"waypoints":[]}')
+        elif self.path == "/labels":
+            p = os.path.join(ROOT, "data/route_lanes.json")
+            if not os.path.exists(p):
+                self._send(200, '{"labels":[]}')
+                return
+            rl = json.load(open(p))
+            W, Hg = rl["grid"]
+            mmpp = rl["mm_per_px"]
+            out = []
+            for lb in rl.get("labels", []):
+                size = lb.get("size", 9.6)
+                out.append({
+                    "text": lb["text"],
+                    "lon": MINLON + lb["x"] / W * (MAXLON - MINLON),
+                    "lat": MAXLAT - lb["y"] / Hg * (MAXLAT - MINLAT),
+                    "hw": len(lb["text"]) * size * 0.36 / mmpp,
+                    "hh": size * 0.62 / mmpp})
+            self._send(200, json.dumps({"labels": out, "grid": [W, Hg]}))
         else:
             self._send(404, "{}")
 

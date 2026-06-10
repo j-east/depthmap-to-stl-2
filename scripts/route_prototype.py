@@ -49,13 +49,16 @@ import os
 PATH_MODE = "waypoints"     # "waypoints" = Dijkstra between points; "drawn" = the points ARE the path
 MIN_RADIUS_MM = 8.0         # minimum bend radius of the rendered course
 CROP = None                 # [minlon, minlat, maxlon, maxlat] -> the physical board
+LABEL_OVERRIDES = {}        # text -> [lon, lat], hand-placed in the editor
 if os.path.exists("data/waypoints.json"):
     _wj = json.load(open("data/waypoints.json"))
     WAYPOINTS = [tuple(p) for p in _wj["waypoints"]]
     PATH_MODE = _wj.get("mode", "waypoints")
     MIN_RADIUS_MM = float(_wj.get("min_radius_mm", MIN_RADIUS_MM))
     CROP = _wj.get("crop")
-    print(f"{PATH_MODE} mode, {len(WAYPOINTS)} points, min radius {MIN_RADIUS_MM} mm, crop {CROP}")
+    LABEL_OVERRIDES = _wj.get("label_overrides", {})
+    print(f"{PATH_MODE} mode, {len(WAYPOINTS)} points, min radius {MIN_RADIUS_MM} mm, "
+          f"crop {CROP}, {len(LABEL_OVERRIDES)} label overrides")
 
 def render_base():
     """Hillshade + bathymetry + coastline + landmarks; also saves data/basemap.png."""
@@ -410,37 +413,132 @@ if close:
 else:
     print("hole collision check: clean")
 
-# ---- labels: START / END, and the running count every 5 holes ----
-def label_pos(ic, d_arc, extra_off_mm=4.0):
-    i2 = min(np.searchsorted(u, min(max(u[min(ic, len(u) - 1)] + d_arc, 0), u[-1])), len(u) - 1)
-    off = LANE_OFFSET_PX + extra_off_mm / MM_PER_PX
-    for side in (1.0, -1.0):  # prefer +side; flip if another track section is close
-        x = rx[i2] + side * off * nx[i2]; y = ry[i2] + side * off * ny[i2]
-        clash = False
-        for nb in tree.query_ball_point([x, y], PROX_PX * 0.8):
-            da = abs(u[nb] - u[i2])
-            if min(da, total - da) > ARC_NEAR_PX:
-                clash = True; break
-        if not clash:
-            break
-    ang = math.degrees(math.atan2(-ty[i2], tx[i2]))
-    return float(x), float(y), float(ang)
+# ---- labels: START / END and the count every 5 holes; all north-up,
+# placed to avoid the track, holes, group rings, and each other ----
+LABEL_MM = 9.6
+hole_tree = cKDTree(allh)
+placed_rects = []
+
+def rect_penalty(x, y, hw, hh):
+    """0 = clear; otherwise weighted badness (holes are near-forbidden)."""
+    pen = 0
+    # true lane envelope: lanes + line width + a hair; rings stick out 2.9mm
+    margin = LANE_OFFSET_PX + 1.4 / MM_PER_PX
+    r = math.hypot(hw + margin, hh + margin)
+    hits = 0
+    for nb in tree.query_ball_point([x, y], r):
+        if abs(rx[nb] - x) < hw + margin and abs(ry[nb] - y) < hh + margin:
+            hits += 1
+    pen += min(hits, 6) * 10
+    for nb in hole_tree.query_ball_point([x, y], r):
+        if (abs(allh[nb][0] - x) < hw + 2.2 / MM_PER_PX and
+                abs(allh[nb][1] - y) < hh + 2.2 / MM_PER_PX):
+            pen += 1000
+    for qx, qy, qw, qh in placed_rects:
+        if (abs(qx - x) < hw + qw + 1.5 / MM_PER_PX and
+                abs(qy - y) < hh + qh + 1.5 / MM_PER_PX):
+            pen += 500
+    return pen
+
+def _attempt(ic, d_arc, text, size_mm, mults):
+    hw = len(text) * size_mm * 0.36 / MM_PER_PX
+    hh = size_mm * 0.62 / MM_PER_PX
+    base_off = LANE_OFFSET_PX + (2.2 + size_mm * 0.55) / MM_PER_PX
+    s0 = u[min(ic, len(u) - 1)] + d_arc
+    best, best_pen = None, 1e18
+    # prefer close: small lateral offsets first, sliding along the track too
+    for mult in mults:
+        for darc_mm in (0.0, 6.0, -6.0, 11.0, -11.0, 16.0, -16.0):
+            i2 = min(np.searchsorted(u, min(max(s0 + darc_mm / MM_PER_PX, 0), u[-1])), len(u) - 1)
+            for side in (1.0, -1.0):
+                x = rx[i2] + side * base_off * mult * nx[i2]
+                y = ry[i2] + side * base_off * mult * ny[i2]
+                x = min(max(x, cx0 + hw + 20), cx1 - hw - 20)
+                y = min(max(y, cy0 + hh + 20), cy1 - hh - 20)
+                pen = rect_penalty(x, y, hw, hh)
+                if pen == 0:
+                    return x, y, 0, hw, hh
+                if pen < best_pen:
+                    best, best_pen = (x, y), pen
+    # crowded corner: sweep rings around the anchor for the nearest clear spot
+    if best_pen > 60:
+        ia = min(np.searchsorted(u, min(max(s0, 0), u[-1])), len(u) - 1)
+        ax, ay = rx[ia], ry[ia]
+        for rad_mm in np.arange(13.0, 56.0, 3.5):
+            for angd in range(0, 360, 24):
+                x = ax + math.cos(math.radians(angd)) * rad_mm / MM_PER_PX
+                y = ay + math.sin(math.radians(angd)) * rad_mm / MM_PER_PX
+                x = min(max(x, cx0 + hw + 20), cx1 - hw - 20)
+                y = min(max(y, cy0 + hh + 20), cy1 - hh - 20)
+                pen = rect_penalty(x, y, hw, hh)
+                if pen == 0:
+                    return x, y, 0, hw, hh
+                if pen < best_pen:
+                    best, best_pen = (x, y), pen
+    return best[0], best[1], best_pen, hw, hh
+
+def label_pos(ic, d_arc, text, mults=(1.0, 1.2, 1.45, 1.7, 2.0, 2.4, 2.8)):
+    """Find a home for the label; crowded spots get progressively smaller text."""
+    if text in LABEL_OVERRIDES:
+        # hand-placed in the editor: position is law; only shrink if the user
+        # dropped it onto another label or a hole
+        lon, lat = LABEL_OVERRIDES[text]
+        x, y = lonlat_to_px(lon, lat)
+        for size_mm in (LABEL_MM, 7.4, 6.2):
+            hw = len(text) * size_mm * 0.36 / MM_PER_PX
+            hh = size_mm * 0.62 / MM_PER_PX
+            if rect_penalty(x, y, hw, hh) < 500:
+                break
+        placed_rects.append((x, y, hw, hh))
+        return float(x), float(y), size_mm
+    overall, overall_score = None, 1e18
+    for size_mm in (LABEL_MM, 7.4, 6.2):
+        x, y, pen, hw, hh = _attempt(ic, d_arc, text, size_mm, mults)
+        if pen == 0:
+            placed_rects.append((x, y, hw, hh))
+            return float(x), float(y), size_mm
+        score = pen + (LABEL_MM - size_mm) * 6
+        if score < overall_score:
+            overall, overall_score = (x, y, size_mm, hw, hh), score
+    x, y, size_mm, hw, hh = overall
+    print(f"  label '{text}': least-bad fallback at {size_mm} mm, penalty {overall_score:.0f}")
+    placed_rects.append((x, y, hw, hh))
+    return float(x), float(y), size_mm
 
 labels = []
-x_, y_, a_ = label_pos(ic0, -cluster_len / 2 - hole_step * 5)
-labels.append({"text": "START", "x": x_, "y": y_, "angle": a_})
-x_, y_, a_ = label_pos(icf, foff + hole_step * 2.5)
-labels.append({"text": "END", "x": x_, "y": y_, "angle": a_})
+x_, y_, s_ = label_pos(ic0, -cluster_len / 2 - hole_step * 5 - 8.0 / MM_PER_PX,
+                       "START", mults=(1.0, 1.2, 1.45))
+labels.append({"text": "START", "x": x_, "y": y_, "angle": 0.0, "size": s_})
+x_, y_, s_ = label_pos(icf, foff + hole_step * 2.5 + 8.0 / MM_PER_PX,
+                       "END", mults=(1.0, 1.2, 1.45))
+labels.append({"text": "END", "x": x_, "y": y_, "angle": 0.0, "size": s_})
 for g, c in enumerate(centers):
     ic = min(np.searchsorted(u, c), len(u) - 1)
-    x_, y_, a_ = label_pos(ic, 0.0)
-    labels.append({"text": str((g + 1) * 5), "x": x_, "y": y_, "angle": a_})
+    txt = str((g + 1) * 5)
+    x_, y_, s_ = label_pos(ic, 0.0, txt)
+    labels.append({"text": txt, "x": x_, "y": y_, "angle": 0.0, "size": s_})
+
+# ---- small capsule across the track around each MILESTONE row: the three
+# holes (one per lane) at every 5th position, which the count label names ----
+group_rings = []
+for c in centers:
+    ic = min(np.searchsorted(u, c), len(u) - 1)
+    # last hole of the group = the 5th/10th/15th... in travel direction
+    pts = [list(lane_pt(k, ic, 2 * hole_step)) for k in range(3)]
+    group_rings.append({"pts": pts, "half_w": float(2.5 / MM_PER_PX)})
+
+# starting block: one capsule around both 2x3 start rows
+ia = min(np.searchsorted(u, max(u[ic0] + offs[0], 0)), len(u) - 1)
+ib = min(np.searchsorted(u, max(u[ic0] + offs[1], 0)), len(u) - 1)
+group_rings.append({"pts": [[float(rx[ia]), float(ry[ia])], [float(rx[ib]), float(ry[ib])]],
+                    "half_w": float(LANE_OFFSET_PX * squeeze[ic0] + 2.5 / MM_PER_PX)})
 
 json.dump({"lanes": [[list(map(float, l[0])), list(map(float, l[1]))] for l in lanes],
            "holes": [[(float(x), float(y)) for x, y in hl] for hl in holes],
            "bbox": [MINLON, MINLAT, MAXLON, MAXLAT], "grid": [W, H],
            "mm_per_px": MM_PER_PX, "crop_px": [cx0, cy0, cx1, cy1],
-           "labels": labels, "datum_m": DATUM_M, "src_file": SRC,
+           "labels": labels, "group_rings": group_rings,
+           "datum_m": DATUM_M, "src_file": SRC,
            "src_m_per_px": M_SRC,
            "spec": {"lane_sp_mm": LANE_SP_MM, "hole_step_mm": hole_step * MM_PER_PX,
                     "hole_dia_mm": 3.2,
@@ -459,14 +557,29 @@ for hl, col in zip(holes, LANE_COLORS):
     for x, y in hl:
         draw.ellipse([x - HOLE_R, y - HOLE_R, x + HOLE_R, y + HOLE_R],
                      fill=(20, 20, 20), outline=col, width=4)
-try:
-    from PIL import ImageFont
-    _font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc",
-                               max(12, int(3.2 / MM_PER_PX)))
-except Exception:
-    _font = None
+# group capsule outlines (under the text)
+_outer = Image.new("L", pim.size, 0); _inner = Image.new("L", pim.size, 0)
+_do, _di = ImageDraw.Draw(_outer), ImageDraw.Draw(_inner)
+RING_W = 0.8 / MM_PER_PX
+for ring in group_rings:
+    rpts = [tuple(p) for p in ring["pts"]]
+    for dr2, w in ((_do, 2 * ring["half_w"] + RING_W), (_di, 2 * ring["half_w"] - RING_W)):
+        dr2.line(rpts, fill=255, width=max(2, int(w)), joint="curve")
+        for p in (rpts[0], rpts[-1]):
+            dr2.ellipse([p[0] - w / 2, p[1] - w / 2, p[0] + w / 2, p[1] + w / 2], fill=255)
+_ringmask = np.array(_outer, bool) & ~np.array(_inner, bool)
+pim.paste((250, 250, 250), mask=Image.fromarray((_ringmask * 255).astype(np.uint8)))
+
+def _label_font(size_mm):
+    try:
+        from PIL import ImageFont
+        return ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc",
+                                  max(12, int(size_mm / MM_PER_PX)))
+    except Exception:
+        return None
 for lb in labels:
-    draw.text((lb["x"], lb["y"]), lb["text"], fill=(255, 255, 255), font=_font,
+    draw.text((lb["x"], lb["y"]), lb["text"], fill=(255, 255, 255),
+              font=_label_font(lb.get("size", LABEL_MM)),
               anchor="mm", stroke_width=3, stroke_fill=(0, 0, 0))
 
 # map garnish from fetch_features.py, if present

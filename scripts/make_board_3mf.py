@@ -2,8 +2,8 @@
 """Build the multicolor cribbage board as a single 3MF for Bambu Studio (H2D).
 
 Objects (assign a filament to each part after import):
-  base    — terrain slab: 10x relief, engraved depth contours, counterbore
-            pads + 369 bored peg holes
+  ocean/shoreline/land — terrain slab split at the datum: engraved depth
+            contours, one-layer shoreline ring, 369 bored peg holes
   lane_red / lane_gold / lane_white — raised track ribbons (0.5 mm proud),
             interrupted at each peg hole
   labels  — raised START/END + every-5 counts
@@ -32,10 +32,9 @@ RIB_W = 1.2          # ribbon width (mm)
 RIB_H = 0.5          # ribbon height above terrain (mm)
 RIB_EMBED = 0.15     # ribbon embedment into the base (mm)
 HOLE_R = 1.6         # peg hole radius (mm)
-HOLE_DEPTH = 8.0     # peg hole depth below its pad (mm)
-PAD_R = 2.4          # counterbore pad radius (mm)
+HOLE_DEPTH = 8.0     # peg hole depth below the surface at its center (mm)
 GROOVE = 0.25        # contour engraving depth (mm)
-TEXT_MM = 3.2        # label text height (mm)
+TEXT_MM = 9.6        # label text height (mm) — big enough to print legibly
 
 d = json.load(open(LANES))
 MMPP = d["mm_per_px"]
@@ -112,24 +111,22 @@ tol = np.maximum(gmag * 0.6, 0.02)
 for L in np.arange(-15, el_c.min(), -15):
     ztop[(el_c <= 0) & (np.abs(el_c - L) < tol)] -= GROOVE
 
-# counterbore pads + bored peg holes
+# bored peg holes: a plain vertical bore into the local surface (no pad —
+# on slopes the rim is slightly slanted, which pegs don't mind)
 holes_mm = [px_to_mm(x, y) for hl in d["holes"] for x, y in hl]
-ir, ic = np.meshgrid(np.arange(nyb + 1), np.arange(ncol := nxb + 1), indexing="ij")
 for hx, hy in holes_mm:
     c0 = int(hx / PITCH_B); r0 = int((BH - hy) / PITCH_B)
-    w = int(PAD_R / PITCH_B) + 2
+    w = int(HOLE_R / PITCH_B) + 2
     rs, re = max(0, r0 - w), min(nyb + 1, r0 + w + 1)
     cs, ce = max(0, c0 - w), min(nxb + 1, c0 + w + 1)
     lx = ccol[cs:ce] * PITCH_B; ly = BH - crow[rs:re] * PITCH_B
     DX, DY = np.meshgrid(lx - hx, ly - hy)
-    dist = np.hypot(DX, DY)
-    pad = dist <= PAD_R
-    if not pad.any():
+    bore = np.hypot(DX, DY) <= HOLE_R
+    if not bore.any():
         continue
-    zpad = float(ztop[rs:re, cs:ce][pad].min())
-    ztop[rs:re, cs:ce][pad] = zpad
-    bore = dist <= HOLE_R
-    ztop[rs:re, cs:ce][bore] = max(zpad - HOLE_DEPTH, 1.2)
+    zc = float(ztop[min(r0, nyb), min(c0, nxb)])
+    floor = max(zc - HOLE_DEPTH, 1.2)
+    ztop[rs:re, cs:ce][bore] = np.minimum(ztop[rs:re, cs:ce][bore], floor)
 
 # ---- split the slab at the datum: ocean below, a one-layer shoreline ring
 # at the waterline, land above — three parts, three filaments ----
@@ -215,7 +212,7 @@ def labels_mask():
     for lb in d.get("labels", []):
         ang = ((lb["angle"] + 90) % 180) - 90  # keep text upright-ish
         x_mm, y_mm = px_to_mm(lb["x"], lb["y"])
-        stamp_text(img, lb["text"], x_mm, y_mm, TEXT_MM, ang)
+        stamp_text(img, lb["text"], x_mm, y_mm, lb.get("size", TEXT_MM), ang)
     # map garnish: place/island/water names + buoy dots
     for kind, size in [("places", 2.6), ("islands", 2.0), ("bays", 1.8)]:
         for p in FEATS.get(kind, []):
@@ -227,7 +224,32 @@ def labels_mask():
         x_mm, y_mm = ll_to_mm(b["lon"], b["lat"])
         px_, py_ = x_mm / PITCH_F, (BH - y_mm) / PITCH_F
         dr.ellipse([px_ - rb, py_ - rb, px_ + rb, py_ + rb], fill=1)
-    return img
+    # capsule outline around each group of 5
+    arr = np.array(img, bool)
+    rings = d.get("group_rings", [])
+    if rings:
+        outer = Image.new("L", (nxf, nyf), 0); inner = Image.new("L", (nxf, nyf), 0)
+        dro, dri = ImageDraw.Draw(outer), ImageDraw.Draw(inner)
+        for ring in rings:
+            pts = []
+            for gx, gy in ring["pts"]:
+                x_mm, y_mm = px_to_mm(gx, gy)
+                pts.append((x_mm / PITCH_F, (BH - y_mm) / PITCH_F))
+            hw_f = ring["half_w"] * MMPP / PITCH_F
+            for dr2, w in ((dro, 2 * hw_f + 0.8 / PITCH_F), (dri, 2 * hw_f - 0.8 / PITCH_F)):
+                dr2.line(pts, fill=255, width=max(2, int(w)), joint="curve")
+                for p in (pts[0], pts[-1]):
+                    dr2.ellipse([p[0] - w / 2, p[1] - w / 2, p[0] + w / 2, p[1] + w / 2], fill=255)
+        arr |= np.array(outer, bool) & ~np.array(inner, bool)
+    # labels/rings must NEVER print over a peg hole: punch clearance discs
+    punch = Image.new("1", (nxf, nyf), 0)
+    dp = ImageDraw.Draw(punch)
+    rp = (HOLE_R + 0.5) / PITCH_F
+    for hx, hy in holes_mm:
+        px_, py_ = hx / PITCH_F, (BH - hy) / PITCH_F
+        dp.ellipse([px_ - rp, py_ - rp, px_ + rp, py_ + rp], fill=1)
+    arr &= ~np.array(punch, bool)
+    return arr
 
 def roads_mask():
     img = Image.new("1", (nxf, nyf), 0)
