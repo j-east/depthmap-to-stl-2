@@ -42,8 +42,16 @@ cx0, cy0, cx1, cy1 = d["crop_px"]
 SRC = d.get("src_file", SRC)
 M_PER_PX = d.get("src_m_per_px", M_PER_PX)
 DATUM_M = d.get("datum_m", 0.0)
-EXAG = float(d.get("exag", EXAG))
+# live region params: base height + height multiplier are editable in the
+# editor and apply on rebuild without re-routing
+try:
+    _regp = json.load(open("data/regions.json"))["regions"][d.get("region", "")]
+except Exception:
+    _regp = {}
+EXAG = float(_regp.get("exag", d.get("exag", EXAG)))
+BASE_MM = float(_regp.get("base_mm", BASE_MM))
 OUT = OUT or f"data/board_{d.get('region', 'board')}.3mf"
+print(f"base {BASE_MM} mm, height multiplier {EXAG}x")
 BW = (cx1 - cx0) * MMPP   # board width (mm)
 BH = (cy1 - cy0) * MMPP   # board height (mm)
 ZPM = MMPP / M_PER_PX * EXAG

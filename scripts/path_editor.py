@@ -70,6 +70,10 @@ HTML = """<!DOCTYPE html>
   <button id="gmaps">🌍 Compare in Google Maps</button>
   <label>Min bend radius (mm)
     <input type="number" id="radius" value="8" min="3" max="25" step="0.5"></label>
+  <div class="row">
+    <label>Base (mm)<input type="number" id="baseMm" value="10" min="3" max="30" step="0.5"></label>
+    <label>Height ×<input type="number" id="exagX" value="5" min="0.2" max="20" step="0.1"></label>
+  </div>
   <label>New place name
     <input type="text" id="newLabel" placeholder="e.g. Zermatt" style="width:100%"></label>
   <button id="addLabel">Add label at view center</button>
@@ -347,7 +351,17 @@ async function loadRegions(){
   const sel=document.getElementById('regionSel');
   sel.innerHTML=d.names.map(n=>'<option'+(n==d.active?' selected':'')+'>'+n+'</option>').join('');
   [MINLON,MINLAT,MAXLON,MAXLAT]=d.bbox;
+  if(d.base_mm!=null) document.getElementById('baseMm').value=d.base_mm;
+  if(d.exag!=null) document.getElementById('exagX').value=d.exag;
 }
+async function saveRegionParams(){
+  const b=parseFloat(document.getElementById('baseMm').value),
+        x=parseFloat(document.getElementById('exagX').value);
+  if(isNaN(b)||isNaN(x)) return;
+  await fetch('/region_params',{method:'POST',body:JSON.stringify({base_mm:b,exag:x})});
+  status.textContent='saved base '+b+' mm, height ×'+x+' (applies on next 3MF/STL build)'; }
+document.getElementById('baseMm').onchange=saveRegionParams;
+document.getElementById('exagX').onchange=saveRegionParams;
 document.getElementById('regionSel').onchange = async e=>{
   status.textContent='switching region… (rebuilding map, 1-2 min)';
   const r=await fetch('/region',{method:'POST',body:JSON.stringify({name:e.target.value})});
@@ -355,7 +369,7 @@ document.getElementById('regionSel').onchange = async e=>{
   if(out.bbox) [MINLON,MINLAT,MAXLON,MAXLAT]=out.bbox;
   status.textContent=out.log||'switched';
   showingBase=false; img.src='/map.png?'+Date.now();
-  await load(); };
+  await loadRegions(); await load(); };
 async function load(){ const r=await fetch('/waypoints'); const d=await r.json();
   wps=d.waypoints||[]; strokes=[]; crop=d.crop||null;
   labOverrides=d.label_overrides||{};
@@ -448,9 +462,12 @@ class H(BaseHTTPRequestHandler):
         elif self.path == "/regions":
             cfg = _regions_cfg()
             act = cfg["active"]
+            reg = cfg["regions"][act]
             self._send(200, json.dumps({"active": act,
                                         "names": sorted(cfg["regions"].keys()),
-                                        "bbox": cfg["regions"][act]["bbox"]}))
+                                        "bbox": reg["bbox"],
+                                        "base_mm": reg.get("base_mm", 10.0),
+                                        "exag": reg.get("exag", 5.0)}))
         elif self.path == "/labels":
             p = os.path.join(ROOT, "data/route_lanes.json")
             if not os.path.exists(p):
@@ -485,6 +502,15 @@ class H(BaseHTTPRequestHandler):
         path = _wp_path()
         if self.path == "/waypoints":
             json.dump(body, open(path, "w"), indent=1)
+            self._send(200, '{"ok":true}')
+        elif self.path == "/region_params":
+            cfg = _regions_cfg()
+            reg = cfg["regions"][cfg["active"]]
+            if "base_mm" in body:
+                reg["base_mm"] = float(body["base_mm"])
+            if "exag" in body:
+                reg["exag"] = float(body["exag"])
+            json.dump(cfg, open(os.path.join(ROOT, "data/regions.json"), "w"), indent=1)
             self._send(200, '{"ok":true}')
         elif self.path == "/fetch_names":
             if not run_lock.acquire(blocking=False):

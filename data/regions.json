@@ -44,7 +44,8 @@
      44.125,
      "North Haven"
     ]
-   ]
+   ],
+   "base_mm": 10.0
   },
   "dufourspitze": {
    "bbox": [
@@ -80,7 +81,8 @@
      "Monte Rosa massif"
     ]
    ],
-   "snowline_m": 2900
+   "snowline_m": 2900,
+   "base_mm": 10.0
   }
  }
 }
