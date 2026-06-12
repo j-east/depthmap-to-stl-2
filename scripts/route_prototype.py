@@ -507,14 +507,20 @@ def _attempt(ic, d_arc, text, size_mm, mults):
 def label_pos(ic, d_arc, text, mults=(1.0, 1.2, 1.45, 1.7, 2.0, 2.4, 2.8)):
     """Find a home for the label; crowded spots get progressively smaller text."""
     if text in LABEL_OVERRIDES:
-        # hand-placed in the editor: position is law; only shrink if the user
-        # dropped it onto another label or a hole
-        lon, lat = LABEL_OVERRIDES[text]
+        # hand-placed in the editor: position is law; a hand-set size is too,
+        # otherwise shrink only if dropped onto another label or a hole
+        ov = LABEL_OVERRIDES[text]
+        if isinstance(ov, dict):
+            lon, lat = ov["pos"]
+            forced = ov.get("size")
+        else:
+            (lon, lat), forced = ov, None
         x, y = lonlat_to_px(lon, lat)
-        for size_mm in (LABEL_MM, 7.4, 6.2):
+        sizes = (forced,) if forced else (LABEL_MM, 7.4, 6.2)
+        for size_mm in sizes:
             hw = len(text) * size_mm * 0.36 / MM_PER_PX
             hh = size_mm * 0.62 / MM_PER_PX
-            if rect_penalty(x, y, hw, hh) < 500:
+            if forced or rect_penalty(x, y, hw, hh) < 500:
                 break
         placed_rects.append((x, y, hw, hh))
         return float(x), float(y), size_mm

@@ -72,6 +72,9 @@ HTML = """<!DOCTYPE html>
   <label>New place name
     <input type="text" id="newLabel" placeholder="e.g. Zermatt" style="width:100%"></label>
   <button id="addLabel">Add label at view center</button>
+  <button id="fetchNames">🗺 Auto-add place names</button>
+  <label>Selected label size (mm) — or scroll over a label
+    <input type="number" id="labSize" value="9.6" min="3" max="16" step="0.5"></label>
   <button class="primary" id="route">Save &amp; Re-route</button>
   <button id="save">Save only</button>
   <button id="undo">Undo stroke</button>
@@ -89,7 +92,7 @@ let MINLON=%MINLON%, MAXLON=%MAXLON%, MINLAT=%MINLAT%, MAXLAT=%MAXLAT%;
 let wps=[], strokes=[], mode='draw', dragging=-1, drawing=false,
     zoom=1, imgW=0, imgH=0, showingBase=false, crop=null, cropDrag=null,
     labs=[], labOverrides={}, labGrid=null, labMmpp=null, dragLabel=-1,
-    customLabels=[], dragCustom=-1;
+    customLabels=[], dragCustom=-1, selKind=null, selIdx=-1;
 const img=document.getElementById('map'), cv=document.getElementById('cv'),
       ctx=cv.getContext('2d'), status=document.getElementById('status'),
       wrap=document.getElementById('wrap'), stage=document.getElementById('stage'),
@@ -153,17 +156,35 @@ function drawOneLabel(x,y,hw,hh,text,fill,box){
 }
 function drawLabels(){
   if(mode!='labels') return;
-  for(const lb of labs){
+  labs.forEach((lb,i)=>{
     const [x,y,hw,hh]=labelBox(lb);
+    const sel = selKind=='auto'&&selIdx==i;
     drawOneLabel(x,y,hw,hh,lb.text,
       labOverrides[lb.text] ? '#7dd3fc' : '#ffffff',
-      labOverrides[lb.text] ? 'rgba(125,211,252,.7)' : 'rgba(255,255,255,.35)');
-  }
-  for(const cl of customLabels){
+      sel ? '#34d399' : (labOverrides[lb.text] ? 'rgba(125,211,252,.7)' : 'rgba(255,255,255,.35)'));
+  });
+  customLabels.forEach((cl,i)=>{
     const [x,y,hw,hh]=customBox(cl);
-    drawOneLabel(x,y,hw,hh,cl.text,'#fbbf24','rgba(251,191,36,.7)');
-  }
+    const sel = selKind=='custom'&&selIdx==i;
+    drawOneLabel(x,y,hw,hh,cl.text,'#fbbf24', sel ? '#34d399' : 'rgba(251,191,36,.7)');
+  });
 }
+function setSel(kind,i){ selKind=kind; selIdx=i;
+  const inp=document.getElementById('labSize');
+  if(kind=='custom') inp.value=customLabels[i].size||6.5;
+  else if(kind=='auto') inp.value=labs[i].size||9.6;
+  draw(); }
+function applySize(v){
+  v=Math.min(16,Math.max(3,v));
+  document.getElementById('labSize').value=v;
+  if(selKind=='custom'&&selIdx>=0){ customLabels[selIdx].size=v; }
+  else if(selKind=='auto'&&selIdx>=0){
+    const lb=labs[selIdx]; lb.size=v;
+    if(labMmpp){ lb.hw=lb.text.length*v*0.36/labMmpp; lb.hh=v*0.62/labMmpp; }
+    const o=labOverrides[lb.text];
+    labOverrides[lb.text]={pos:(o&&o.pos)||(Array.isArray(o)?o:[lb.lon,lb.lat]), size:v};
+  }
+  draw(); }
 function draw(){
   ctx.clearRect(0,0,cv.width,cv.height);
   drawCrop();
@@ -193,7 +214,18 @@ function setZoom(nz,cx,cy){ nz=Math.min(12,Math.max(0.05,nz));
   zoom=nz; stage.style.transform='scale('+zoom+')';
   wrap.scrollLeft=px*zoom-cx; wrap.scrollTop=py*zoom-cy; draw(); }
 function fit(){ if(imgW) setZoom(Math.min(wrap.clientWidth/imgW, wrap.clientHeight/imgH),0,0); }
-wrap.addEventListener('wheel', e=>{ if(e.ctrlKey||e.metaKey){ e.preventDefault();
+wrap.addEventListener('wheel', e=>{
+  if(mode=='labels' && !e.ctrlKey && !e.metaKey){
+    const rc=cv.getBoundingClientRect();
+    const x=(e.clientX-rc.left)*(cv.width/rc.width), y=(e.clientY-rc.top)*(cv.height/rc.height);
+    const ci=customHit(x,y), ai=ci<0?labelHit(x,y):-1;
+    if(ci>=0||ai>=0){
+      e.preventDefault();
+      if(ci>=0) setSel('custom',ci); else setSel('auto',ai);
+      const cur=parseFloat(document.getElementById('labSize').value)||9.6;
+      applySize(cur + (e.deltaY<0?0.5:-0.5));
+      return; } }
+  if(e.ctrlKey||e.metaKey){ e.preventDefault();
   const r=wrap.getBoundingClientRect();
   setZoom(zoom*Math.exp(-e.deltaY*0.012), e.clientX-r.left, e.clientY-r.top); }}, {passive:false});
 function evPos(e){ const r=cv.getBoundingClientRect();
@@ -227,9 +259,10 @@ cv.addEventListener('mousedown', e=>{ const [x,y]=evPos(e);
       if(ci>=0){ customLabels.splice(ci,1); }
       else { const i=labelHit(x,y); if(i>=0) delete labOverrides[labs[i].text]; }
       draw(); return; }
-    if(ci>=0){ dragCustom=ci; return; }
+    if(ci>=0){ setSel('custom',ci); dragCustom=ci; return; }
     const i=labelHit(x,y);
-    if(i>=0) dragLabel=i;
+    if(i>=0){ setSel('auto',i); dragLabel=i; }
+    else setSel(null,-1);
     return; }
   if(mode=='crop'){
     if(e.button!=0) return;
@@ -253,8 +286,10 @@ cv.addEventListener('mousemove', e=>{ const [x,y]=evPos(e);
       draw(); }
     else if(dragLabel>=0){
       const ll=px2ll(x,y);
-      labs[dragLabel].lon=ll[0]; labs[dragLabel].lat=ll[1];
-      labOverrides[labs[dragLabel].text]=[ll[0],ll[1]];
+      const lb=labs[dragLabel];
+      lb.lon=ll[0]; lb.lat=ll[1];
+      const o=labOverrides[lb.text];
+      labOverrides[lb.text]={pos:[ll[0],ll[1]], ...(o&&o.size?{size:o.size}:{})};
       draw(); }
     return; }
   if(mode=='crop' && cropDrag){
@@ -286,6 +321,9 @@ async function loadLabels(){ try{
   const r=await fetch('/labels'); const d=await r.json();
   labs=(d.labels||[]).filter(l=>!l.custom);
   labGrid=d.grid||null; labMmpp=d.mmpp||null; draw(); }catch(e){} }
+document.getElementById('labSize').oninput=e=>{
+  const v=parseFloat(e.target.value);
+  if(!isNaN(v)) applySize(v); };
 document.getElementById('addLabel').onclick=()=>{
   const t=document.getElementById('newLabel').value.trim();
   if(!t) return;
@@ -293,6 +331,15 @@ document.getElementById('addLabel').onclick=()=>{
   const ll=px2ll(cx_,cy_);
   customLabels.push({text:t, lon:ll[0], lat:ll[1], size:6.5});
   document.getElementById('newLabel').value='';
+  setMode('labels'); };
+document.getElementById('fetchNames').onclick=async()=>{
+  status.textContent='fetching place names from OSM…';
+  await fetch('/waypoints',{method:'POST',body:payload()});  // save first
+  const r=await fetch('/fetch_names',{method:'POST',body:'{}'});
+  const out=await r.json();
+  status.textContent=out.log||'done';
+  const d=await (await fetch('/waypoints')).json();
+  customLabels=d.custom_labels||[];
   setMode('labels'); };
 async function loadRegions(){
   const d=await (await fetch('/regions')).json();
@@ -414,6 +461,7 @@ class H(BaseHTTPRequestHandler):
                 out.append({
                     "text": lb["text"],
                     "custom": lb.get("custom", False),
+                    "size": size,
                     "lon": lo + lb["x"] / W * (hi - lo),
                     "lat": la1 - lb["y"] / Hg * (la1 - la0),
                     "hw": len(lb["text"]) * size * 0.36 / mmpp,
@@ -428,6 +476,17 @@ class H(BaseHTTPRequestHandler):
         if self.path == "/waypoints":
             json.dump(body, open(path, "w"), indent=1)
             self._send(200, '{"ok":true}')
+        elif self.path == "/fetch_names":
+            if not run_lock.acquire(blocking=False):
+                self._send(409, json.dumps({"ok": False, "log": "a run is in progress"}))
+                return
+            try:
+                r = subprocess.run(["python3", "scripts/fetch_names.py"], cwd=ROOT,
+                                   capture_output=True, text=True, timeout=300)
+                log = "\n".join((r.stdout + r.stderr).strip().splitlines()[-4:])
+                self._send(200, json.dumps({"ok": r.returncode == 0, "log": log}))
+            finally:
+                run_lock.release()
         elif self.path == "/region":
             cfg = _regions_cfg()
             name = body.get("name")
