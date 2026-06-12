@@ -107,11 +107,19 @@ CX, CY = np.meshgrid(ccol * PITCH_B, BH - crow * PITCH_B)
 el_c = sample_el(CX, CY)
 ztop = np.maximum(BASE_MM + el_c * ZPM, Z_FLOOR)
 
-# engrave depth contours along the seafloor surface (every 15 m)
+# engrave contour grooves: depth lines on the seafloor, topo lines on land,
+# both at intervals adapted to the region's relief
 gmag = np.hypot(*np.gradient(el_c))
-tol = np.maximum(gmag * 0.6, 0.02)
-for L in np.arange(-15, el_c.min(), -15):
-    ztop[(el_c <= 0) & (np.abs(el_c - L) < tol)] -= GROOVE
+tol = np.maximum(gmag * 0.9, 0.02)
+if el_c.min() < 0:
+    wi = next(c for c in (15, 25, 50, 100, 200, 500) if -el_c.min() / c <= 10)
+    for L in np.arange(-wi, el_c.min(), -wi):
+        ztop[(el_c <= 0) & (np.abs(el_c - L) < tol)] -= GROOVE
+if el_c.max() > 0:
+    ci = next(c for c in (20, 25, 50, 100, 200, 250, 500, 1000) if el_c.max() / c <= 16)
+    for L in np.arange(ci, el_c.max(), ci):
+        ztop[(el_c > 0) & (np.abs(el_c - L) < tol)] -= GROOVE
+    print(f"topo lines every {ci} m")
 
 # bored peg holes: a plain vertical bore into the local surface (no pad —
 # on slopes the rim is slightly slanted, which pegs don't mind)
@@ -142,14 +150,33 @@ cmin = np.minimum(np.minimum(ztop[:-1, :-1], ztop[:-1, 1:]),
 shore_mask = cmax > BASE_MM + 0.001
 V_sh, F_sh = block_mesh(shore_mask, np.clip(ztop, BASE_MM, BASE_MM + SHORE_MM),
                         np.full_like(ztop, BASE_MM), PITCH_B)
+
+# optional alpine band: land above the region's snowline gets its own color
+try:
+    _reg = json.load(open("data/regions.json"))["regions"][d.get("region", "")]
+    SNOWLINE_M = _reg.get("snowline_m")
+except Exception:
+    SNOWLINE_M = None
+SNOW_Z = BASE_MM + (SNOWLINE_M - DATUM_M) * ZPM if SNOWLINE_M else None
+
+land_top = np.clip(ztop, BASE_MM, SNOW_Z) if SNOW_Z else ztop
 land_mask = cmin > BASE_MM + SHORE_MM + 0.02
-V_land, F_land = block_mesh(land_mask, np.maximum(ztop, BASE_MM + SHORE_MM),
+V_land, F_land = block_mesh(land_mask, np.maximum(land_top, BASE_MM + SHORE_MM),
                             np.full_like(ztop, BASE_MM + SHORE_MM), PITCH_B)
+alpine = None
+if SNOW_Z:
+    alp_mask = cmin > SNOW_Z + 0.02
+    if alp_mask.any():
+        alpine = block_mesh(alp_mask, np.maximum(ztop, SNOW_Z),
+                            np.full_like(ztop, SNOW_Z), PITCH_B)
 print(f"ocean: {len(V_sea):,} verts, {len(F_sea):,} tris "
       f"({BW:.0f} x {BH:.0f} mm, floor down to {zsea.min():.1f} mm)")
 print(f"shore: {len(V_sh):,} verts, {len(F_sh):,} tris (one {SHORE_MM} mm layer at the waterline)")
 print(f"land:  {len(V_land):,} verts, {len(F_land):,} tris "
-      f"(relief to {ztop.max():.1f} mm)")
+      f"(up to {land_top.max():.1f} mm)")
+if alpine:
+    print(f"alpine: {len(alpine[0]):,} verts, {len(alpine[1]):,} tris "
+          f"(above {SNOWLINE_M} m -> z {SNOW_Z:.1f}..{ztop.max():.1f} mm)")
 
 # ---------------- ribbons + labels (fine grid) ----------------
 nyf, nxf = int(round(BH / PITCH_F)), int(round(BW / PITCH_F))
@@ -269,6 +296,8 @@ def roads_mask():
 objects = [("ocean", "#2E6FA3", V_sea, F_sea),
            ("shoreline", "#E2CF9C", V_sh, F_sh),
            ("land", "#6B7F5E", V_land, F_land)]
+if alpine:
+    objects.append(("alpine", "#F2F3F5", *alpine))
 for k, (name, color) in enumerate([("lane_red", "#E03232"),
                                    ("lane_gold", "#F0C832"),
                                    ("lane_white", "#F5F5F0")]):
