@@ -43,6 +43,8 @@ HTML = """<!DOCTYPE html>
   label { font-size:12px; color:#9a9ab0; display:block; margin-top:8px; }
   input[type=number] { width:70px; background:#22222e; color:#eee; border:1px solid #3a3a52;
            border-radius:5px; padding:5px; }
+  select { width:100%; background:#22222e; color:#eee; border:1px solid #3a3a52;
+           border-radius:5px; padding:6px; margin:4px 0 8px; font-size:13px; }
   #status { margin-top:10px; font-size:12px; color:#8fda8f; white-space:pre-wrap; }
   #wrap { flex:1; overflow:auto; position:relative; background:#0a0a10; }
   #stage { position:relative; transform-origin: top left; }
@@ -51,6 +53,7 @@ HTML = """<!DOCTYPE html>
 </style></head><body>
 <div id="side">
   <h2>Course editor</h2>
+  <select id="regionSel"></select>
   <div class="row">
     <button id="modeDraw">✏️ Draw</button>
     <button id="modeWp">📍 Waypoints</button>
@@ -79,7 +82,7 @@ HTML = """<!DOCTYPE html>
   <canvas id="cv"></canvas>
 </div></div>
 <script>
-const MINLON=%MINLON%, MAXLON=%MAXLON%, MINLAT=%MINLAT%, MAXLAT=%MAXLAT%;
+let MINLON=%MINLON%, MAXLON=%MAXLON%, MINLAT=%MINLAT%, MAXLAT=%MAXLAT%;
 let wps=[], strokes=[], mode='draw', dragging=-1, drawing=false,
     zoom=1, imgW=0, imgH=0, showingBase=false, crop=null, cropDrag=null,
     labs=[], labOverrides={}, labGrid=null, dragLabel=-1;
@@ -249,6 +252,20 @@ function payload(){ return JSON.stringify({
 async function loadLabels(){ try{
   const r=await fetch('/labels'); const d=await r.json();
   labs=d.labels||[]; labGrid=d.grid||null; draw(); }catch(e){} }
+async function loadRegions(){
+  const d=await (await fetch('/regions')).json();
+  const sel=document.getElementById('regionSel');
+  sel.innerHTML=d.names.map(n=>'<option'+(n==d.active?' selected':'')+'>'+n+'</option>').join('');
+  [MINLON,MINLAT,MAXLON,MAXLAT]=d.bbox;
+}
+document.getElementById('regionSel').onchange = async e=>{
+  status.textContent='switching region… (rebuilding map, 1-2 min)';
+  const r=await fetch('/region',{method:'POST',body:JSON.stringify({name:e.target.value})});
+  const out=await r.json();
+  if(out.bbox) [MINLON,MINLAT,MAXLON,MAXLAT]=out.bbox;
+  status.textContent=out.log||'switched';
+  showingBase=false; img.src='/map.png?'+Date.now();
+  await load(); };
 async function load(){ const r=await fetch('/waypoints'); const d=await r.json();
   wps=d.waypoints||[]; strokes=[]; crop=d.crop||null;
   labOverrides=d.label_overrides||{};
@@ -280,11 +297,24 @@ document.getElementById('route').onclick = async ()=>{
 let first=true;
 img.onload = ()=>{ imgW=img.naturalWidth; imgH=img.naturalHeight;
   cv.width=imgW; cv.height=imgH; if(first){ first=false; fit(); } draw(); };
-load();
+(async()=>{ await loadRegions(); await load(); })();
 </script></body></html>"""
 
 HTML = (HTML.replace("%MINLON%", str(MINLON)).replace("%MAXLON%", str(MAXLON))
             .replace("%MINLAT%", str(MINLAT)).replace("%MAXLAT%", str(MAXLAT)))
+
+
+def _regions_cfg():
+    return json.load(open(os.path.join(ROOT, "data/regions.json")))
+
+def _active():
+    try:
+        return _regions_cfg()["active"]
+    except Exception:
+        return "deer-isle"
+
+def _wp_path():
+    return os.path.join(ROOT, f"data/waypoints_{_active()}.json")
 
 
 class H(BaseHTTPRequestHandler):
@@ -313,14 +343,26 @@ class H(BaseHTTPRequestHandler):
         elif self.path.startswith("/base.png"):
             self._png("basemap.png", fallback="route_prototype.png")
         elif self.path == "/waypoints":
-            p = os.path.join(ROOT, "data/waypoints.json")
+            p = _wp_path()
             self._send(200, open(p).read() if os.path.exists(p) else '{"waypoints":[]}')
+        elif self.path == "/regions":
+            cfg = _regions_cfg()
+            act = cfg["active"]
+            self._send(200, json.dumps({"active": act,
+                                        "names": sorted(cfg["regions"].keys()),
+                                        "bbox": cfg["regions"][act]["bbox"]}))
         elif self.path == "/labels":
             p = os.path.join(ROOT, "data/route_lanes.json")
             if not os.path.exists(p):
                 self._send(200, '{"labels":[]}')
                 return
             rl = json.load(open(p))
+            cfg = _regions_cfg()
+            act = cfg["active"]
+            if rl.get("region", act) != act:   # stale layout from another region
+                self._send(200, '{"labels":[]}')
+                return
+            lo, la0, hi, la1 = cfg["regions"][act]["bbox"]
             W, Hg = rl["grid"]
             mmpp = rl["mm_per_px"]
             out = []
@@ -328,8 +370,8 @@ class H(BaseHTTPRequestHandler):
                 size = lb.get("size", 9.6)
                 out.append({
                     "text": lb["text"],
-                    "lon": MINLON + lb["x"] / W * (MAXLON - MINLON),
-                    "lat": MAXLAT - lb["y"] / Hg * (MAXLAT - MINLAT),
+                    "lon": lo + lb["x"] / W * (hi - lo),
+                    "lat": la1 - lb["y"] / Hg * (la1 - la0),
                     "hw": len(lb["text"]) * size * 0.36 / mmpp,
                     "hh": size * 0.62 / mmpp})
             self._send(200, json.dumps({"labels": out, "grid": [W, Hg]}))
@@ -338,10 +380,30 @@ class H(BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        path = os.path.join(ROOT, "data/waypoints.json")
+        path = _wp_path()
         if self.path == "/waypoints":
             json.dump(body, open(path, "w"), indent=1)
             self._send(200, '{"ok":true}')
+        elif self.path == "/region":
+            cfg = _regions_cfg()
+            name = body.get("name")
+            if name not in cfg["regions"]:
+                self._send(400, json.dumps({"ok": False, "log": f"unknown region {name}"}))
+                return
+            cfg["active"] = name
+            json.dump(cfg, open(os.path.join(ROOT, "data/regions.json"), "w"), indent=1)
+            if not run_lock.acquire(blocking=False):
+                self._send(200, json.dumps({"ok": True, "log": "switched (a run is in progress)",
+                                            "bbox": cfg["regions"][name]["bbox"]}))
+                return
+            try:
+                r = subprocess.run(["python3", "scripts/route_prototype.py"], cwd=ROOT,
+                                   capture_output=True, text=True, timeout=900)
+                log = "\n".join((r.stdout + r.stderr).strip().splitlines()[-6:])
+                self._send(200, json.dumps({"ok": True, "log": log,
+                                            "bbox": cfg["regions"][name]["bbox"]}))
+            finally:
+                run_lock.release()
         elif self.path == "/run":
             if not run_lock.acquire(blocking=False):
                 self._send(409, json.dumps({"ok": False, "log": "a run is already in progress"}))

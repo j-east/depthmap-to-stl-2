@@ -17,13 +17,18 @@ Image.MAX_IMAGE_PIXELS = None
 
 import os
 REGION = {"bbox": [-68.95, 43.98, -68.44, 44.36], "src_file": "data/foxisles_cudem.tif",
-          "src_m_per_px": 8.46, "datum_m": 0}
-if os.path.exists("data/region.json"):
-    REGION.update(json.load(open("data/region.json")))
+          "src_m_per_px": 8.46, "datum_m": 0, "exag": 5.0, "landmarks": []}
+ACTIVE = "deer-isle"
+if os.path.exists("data/regions.json"):
+    _rj = json.load(open("data/regions.json"))
+    ACTIVE = _rj.get("active", ACTIVE)
+    REGION.update(_rj["regions"][ACTIVE])
 SRC = REGION["src_file"]
 MINLON, MINLAT, MAXLON, MAXLAT = REGION["bbox"]
 M_SRC = REGION["src_m_per_px"]
 DATUM_M = REGION["datum_m"]
+EXAG_R = REGION.get("exag", 5.0)
+WAYPOINTS_FILE = f"data/waypoints_{ACTIVE}.json"
 
 # circumnavigation waypoints (lon, lat) — Dijkstra fills in the weave
 WAYPOINTS = [
@@ -50,8 +55,8 @@ PATH_MODE = "waypoints"     # "waypoints" = Dijkstra between points; "drawn" = t
 MIN_RADIUS_MM = 8.0         # minimum bend radius of the rendered course
 CROP = None                 # [minlon, minlat, maxlon, maxlat] -> the physical board
 LABEL_OVERRIDES = {}        # text -> [lon, lat], hand-placed in the editor
-if os.path.exists("data/waypoints.json"):
-    _wj = json.load(open("data/waypoints.json"))
+if os.path.exists(WAYPOINTS_FILE):
+    _wj = json.load(open(WAYPOINTS_FILE))
     WAYPOINTS = [tuple(p) for p in _wj["waypoints"]]
     PATH_MODE = _wj.get("mode", "waypoints")
     MIN_RADIUS_MM = float(_wj.get("min_radius_mm", MIN_RADIUS_MM))
@@ -59,6 +64,9 @@ if os.path.exists("data/waypoints.json"):
     LABEL_OVERRIDES = _wj.get("label_overrides", {})
     print(f"{PATH_MODE} mode, {len(WAYPOINTS)} points, min radius {MIN_RADIUS_MM} mm, "
           f"crop {CROP}, {len(LABEL_OVERRIDES)} label overrides")
+else:
+    WAYPOINTS = []
+print(f"region: {ACTIVE}")
 
 def render_base():
     """Hillshade + bathymetry + coastline + landmarks; also saves data/basemap.png."""
@@ -74,24 +82,40 @@ def render_base():
                            0.35 + 0.45 * (1 - depth)], -1)[water]
     emax = a[land].max(); e = np.clip(a, 0, emax) / emax
     img[land] = np.stack([0.30 + 0.55 * e, 0.55 - 0.15 * e, 0.30 - 0.10 * e], -1)[land]
+    # snowline tint on high terrain (only kicks in for big-relief regions)
+    if emax > 1500:
+        snow = (np.clip((e - 0.55) / 0.2, 0, 1) * 0.85)[..., None]
+        img = np.where(land[..., None], img * (1 - snow) + np.array([0.93, 0.94, 0.97]) * snow, img)
     img[land] *= (0.45 + 0.75 * hs[land])[:, None]
-    # topographic contours: land every 20 m of altitude, water every 15 m of depth
+    # topographic contours, interval adapted to the region's relief
     gmag = np.hypot(*np.gradient(a))
-    tol = np.maximum(gmag * 0.6, 0.02)
-    for L in np.arange(20, a[land].max(), 20):
+    tol = np.maximum(gmag * 0.9, 0.02)
+    lmax = a[land].max() if land.any() else 1.0
+    ci = next(c for c in (20, 25, 50, 100, 200, 250, 500, 1000) if lmax / c <= 16)
+    for L in np.arange(ci, lmax, ci):
         m = land & (np.abs(a - L) < tol)
         img[m] *= 0.55
-    for L in np.arange(-15, a[water].min(), -15):
-        m = water & (np.abs(a - L) < tol)
-        img[m] = img[m] * 0.55 + np.array([0.25, 0.45, 0.55]) * 0.45
+    wmin = a[water].min() if water.any() else 0.0
+    if wmin < 0:
+        wi = next(c for c in (15, 25, 50, 100, 200, 500) if -wmin / c <= 10)
+        for L in np.arange(-wi, wmin, -wi):
+            m = water & (np.abs(a - L) < tol)
+            img[m] = img[m] * 0.55 + np.array([0.25, 0.45, 0.55]) * 0.45
     edge = land ^ ndimage.binary_erosion(land)
     img[edge] = [0.95, 0.9, 0.35]
     pim = Image.fromarray((np.clip(img, 0, 1) * 255).astype(np.uint8))
     dr = ImageDraw.Draw(pim)
+    rr = max(8, W // 320)
+    try:
+        from PIL import ImageFont
+        _lf = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", max(18, W // 130))
+    except Exception:
+        _lf = None
     for lon, lat, label in LANDMARKS:
         x, y = lonlat_to_px(lon, lat)
-        dr.ellipse([x - 7, y - 7, x + 7, y + 7], fill=(255, 60, 60), outline=(0, 0, 0), width=2)
-        dr.text((x + 12, y - 8), label, fill=(255, 255, 255))
+        dr.ellipse([x - rr, y - rr, x + rr, y + rr], fill=(255, 60, 60), outline=(0, 0, 0), width=2)
+        dr.text((x + rr + 6, y), label, fill=(255, 255, 255), font=_lf, anchor="lm",
+                stroke_width=2, stroke_fill=(0, 0, 0))
     pim.resize((W // 2, H // 2), Image.LANCZOS).save("data/basemap.png")
     return pim
 
@@ -111,14 +135,7 @@ def enforce_min_radius(x, y, r_min_px):
         x = np.where(widen, xs, x); y = np.where(widen, ys, y)
     return x, y
 
-LANDMARKS = [
-    (-68.667, 44.157, "Stonington"),
-    (-68.621, 44.272, "Bridge"),
-    (-68.640, 44.292, "Little Deer Isle"),
-    (-68.625, 44.045, "Isle au Haut"),
-    (-68.832, 44.048, "Vinalhaven"),
-    (-68.872, 44.125, "North Haven"),
-]
+LANDMARKS = [tuple(l) for l in REGION.get("landmarks", [])]
 
 DOWN = 4            # routing grid downsample factor
 LANE_COLORS = [(225, 50, 50), (245, 215, 70), (245, 245, 245)]
@@ -155,6 +172,18 @@ HOLE_STEP_PX = HOLE_SP_MM / MM_PER_PX
 GROUP_GAP_PX = GROUP_GAP_MM / MM_PER_PX
 HOLE_CLEAR_PX = (LANE_SP_MM + HOLE_MARGIN_MM) / MM_PER_PX
 LINE_MARGIN_PX = LINE_MARGIN_MM / MM_PER_PX
+
+def lonlat_to_px(lon, lat):
+    return ((lon - MINLON) / (MAXLON - MINLON) * W,
+            (MAXLAT - lat) / (MAXLAT - MINLAT) * H)
+
+if len(WAYPOINTS) < 2:
+    # fresh region: render the chart so the editor has a map to draw on
+    pim = render_base()
+    dr = ImageDraw.Draw(pim)
+    dr.rectangle([cx0, cy0, cx1, cy1], outline=(255, 255, 255), width=6)
+    pim.resize((W // 2, H // 2), Image.LANCZOS).save("data/route_prototype.png")
+    raise SystemExit(f"region '{ACTIVE}': no course yet — draw one and Save & Re-route")
 CROP_MARG_PX = 2.5 / MM_PER_PX    # holes must sit this far inside the board edge
 
 # ---- routing on downsampled grid ----
@@ -183,10 +212,6 @@ rows = np.concatenate(rows); cols = np.concatenate(cols); wts = np.concatenate(w
 graph = sparse.csr_matrix(
     (np.concatenate([wts, wts]), (np.concatenate([rows, cols]), np.concatenate([cols, rows]))),
     shape=(h * w, h * w))
-
-def lonlat_to_px(lon, lat):
-    return ((lon - MINLON) / (MAXLON - MINLON) * W,
-            (MAXLAT - lat) / (MAXLAT - MINLAT) * H)
 
 def snap(lon, lat):
     x, y = lonlat_to_px(lon, lat)
@@ -538,8 +563,8 @@ json.dump({"lanes": [[list(map(float, l[0])), list(map(float, l[1]))] for l in l
            "bbox": [MINLON, MINLAT, MAXLON, MAXLAT], "grid": [W, H],
            "mm_per_px": MM_PER_PX, "crop_px": [cx0, cy0, cx1, cy1],
            "labels": labels, "group_rings": group_rings,
-           "datum_m": DATUM_M, "src_file": SRC,
-           "src_m_per_px": M_SRC,
+           "datum_m": DATUM_M, "src_file": SRC, "region": ACTIVE,
+           "exag": EXAG_R, "src_m_per_px": M_SRC,
            "spec": {"lane_sp_mm": LANE_SP_MM, "hole_step_mm": hole_step * MM_PER_PX,
                     "hole_dia_mm": 3.2,
                     "board_mm": [(cx1 - cx0) * MM_PER_PX, (cy1 - cy0) * MM_PER_PX]}},

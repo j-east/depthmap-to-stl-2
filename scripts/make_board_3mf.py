@@ -19,7 +19,7 @@ Image.MAX_IMAGE_PIXELS = None
 
 SRC = "data/foxisles_cudem.tif"
 LANES = "data/route_lanes.json"
-OUT = "data/deer_isle_board.3mf"
+OUT = None  # default: data/board_<region>.3mf
 
 BASE_MM = 10.0       # datum height (land rises above, water floor dips below)
 EXAG = 5.0           # vertical exaggeration
@@ -42,6 +42,8 @@ cx0, cy0, cx1, cy1 = d["crop_px"]
 SRC = d.get("src_file", SRC)
 M_PER_PX = d.get("src_m_per_px", M_PER_PX)
 DATUM_M = d.get("datum_m", 0.0)
+EXAG = float(d.get("exag", EXAG))
+OUT = OUT or f"data/board_{d.get('region', 'board')}.3mf"
 BW = (cx1 - cx0) * MMPP   # board width (mm)
 BH = (cy1 - cy0) * MMPP   # board height (mm)
 ZPM = MMPP / M_PER_PX * EXAG

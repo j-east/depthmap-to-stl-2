@@ -1,0 +1,85 @@
+{
+ "active": "dufourspitze",
+ "regions": {
+  "deer-isle": {
+   "bbox": [
+    -68.95,
+    43.98,
+    -68.44,
+    44.36
+   ],
+   "source": "noaa",
+   "src_file": "data/foxisles_cudem.tif",
+   "src_m_per_px": 8.46,
+   "datum_m": 0,
+   "exag": 5.0,
+   "landmarks": [
+    [
+     -68.667,
+     44.157,
+     "Stonington"
+    ],
+    [
+     -68.621,
+     44.272,
+     "Bridge"
+    ],
+    [
+     -68.64,
+     44.292,
+     "Little Deer Isle"
+    ],
+    [
+     -68.625,
+     44.045,
+     "Isle au Haut"
+    ],
+    [
+     -68.832,
+     44.048,
+     "Vinalhaven"
+    ],
+    [
+     -68.872,
+     44.125,
+     "North Haven"
+    ]
+   ]
+  },
+  "dufourspitze": {
+   "bbox": [
+    7.6,
+    45.87,
+    7.95,
+    46.03
+   ],
+   "source": "terrarium",
+   "src_file": "data/dem_dufourspitze.tif",
+   "src_m_per_px": 6.643,
+   "datum_m": 800,
+   "exag": 1.2,
+   "landmarks": [
+    [
+     7.8672,
+     45.9369,
+     "Dufourspitze"
+    ],
+    [
+     7.6586,
+     45.9763,
+     "Matterhorn"
+    ],
+    [
+     7.7491,
+     46.0207,
+     "Zermatt"
+    ],
+    [
+     7.833,
+     45.921,
+     "Monte Rosa massif"
+    ]
+   ]
+  }
+ }
+}

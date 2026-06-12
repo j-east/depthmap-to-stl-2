@@ -1,8 +1,0 @@
-{
-  "name": "deer-isle",
-  "bbox": [-68.95, 43.98, -68.44, 44.36],
-  "source": "noaa",
-  "src_file": "data/foxisles_cudem.tif",
-  "src_m_per_px": 8.46,
-  "datum_m": 0
-}
