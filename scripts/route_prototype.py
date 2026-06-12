@@ -657,6 +657,13 @@ ib = min(np.searchsorted(u, max(u[ic0] + offs[-1], 0)), len(u) - 1)
 start_block = {"pts": [[float(rx[ia]), float(ry[ia])], [float(rx[ib]), float(ry[ib])]],
                "half_w": float(LANE_OFFSET_PX * squeeze[ic0] + 2.5 / MM_PER_PX)}
 
+# the course's visual lines terminate at the end marker (double bar) or
+# just past the finish hole — not at the raw end of the drawn path
+_s_term = u[icf] + foff + (hole_step * 0.9 + 4.2 / MM_PER_PX if END_MARKER == "double"
+                           else 3.0 / MM_PER_PX)
+_i_term = min(np.searchsorted(u, _s_term), len(u) - 1)
+lanes = [(lx[:_i_term + 1], ly[:_i_term + 1]) for lx, ly in lanes]
+
 json.dump({"lanes": [[list(map(float, l[0])), list(map(float, l[1]))] for l in lanes],
            "holes": [[(float(x), float(y)) for x, y in hl] for hl in holes],
            "bbox": [MINLON, MINLAT, MAXLON, MAXLAT], "grid": [W, H],
