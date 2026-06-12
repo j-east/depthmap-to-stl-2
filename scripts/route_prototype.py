@@ -62,10 +62,12 @@ if os.path.exists(WAYPOINTS_FILE):
     MIN_RADIUS_MM = float(_wj.get("min_radius_mm", MIN_RADIUS_MM))
     CROP = _wj.get("crop")
     LABEL_OVERRIDES = _wj.get("label_overrides", {})
+    CUSTOM_LABELS = _wj.get("custom_labels", [])
     print(f"{PATH_MODE} mode, {len(WAYPOINTS)} points, min radius {MIN_RADIUS_MM} mm, "
           f"crop {CROP}, {len(LABEL_OVERRIDES)} label overrides")
 else:
     WAYPOINTS = []
+    CUSTOM_LABELS = []
 print(f"region: {ACTIVE}")
 
 def render_base():
@@ -543,6 +545,12 @@ for g, c in enumerate(centers):
     x_, y_, s_ = label_pos(ic, 0.0, txt)
     labels.append({"text": txt, "x": x_, "y": y_, "angle": 0.0, "size": s_})
 
+# user-added place names from the editor: position and text are law
+for cl in CUSTOM_LABELS:
+    x_, y_ = lonlat_to_px(cl["lon"], cl["lat"])
+    labels.append({"text": cl["text"], "x": float(x_), "y": float(y_),
+                   "angle": 0.0, "size": float(cl.get("size", 6.5)), "custom": True})
+
 # ---- small capsule across the track around each MILESTONE row: the three
 # holes (one per lane) at every 5th position, which the count label names ----
 group_rings = []
@@ -608,8 +616,11 @@ for lb in labels:
               anchor="mm", stroke_width=3, stroke_fill=(0, 0, 0))
 
 # map garnish from fetch_features.py, if present
-if os.path.exists("data/features.json"):
-    feats = json.load(open("data/features.json"))
+if os.path.exists(f"data/features_{ACTIVE}.json"):
+    feats = json.load(open(f"data/features_{ACTIVE}.json"))
+    for rv in feats.get("rivers", []):
+        rpts = [lonlat_to_px(lon, lat) for lon, lat in rv["pts"]]
+        draw.line(rpts, fill=(80, 150, 215), width=max(2, int(0.7 / MM_PER_PX)), joint="curve")
     def _f(size_mm):
         try:
             from PIL import ImageFont as _IF

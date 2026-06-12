@@ -69,6 +69,9 @@ HTML = """<!DOCTYPE html>
   <button id="base">Toggle basemap</button>
   <label>Min bend radius (mm)
     <input type="number" id="radius" value="8" min="3" max="25" step="0.5"></label>
+  <label>New place name
+    <input type="text" id="newLabel" placeholder="e.g. Zermatt" style="width:100%"></label>
+  <button id="addLabel">Add label at view center</button>
   <button class="primary" id="route">Save &amp; Re-route</button>
   <button id="save">Save only</button>
   <button id="undo">Undo stroke</button>
@@ -85,7 +88,8 @@ HTML = """<!DOCTYPE html>
 let MINLON=%MINLON%, MAXLON=%MAXLON%, MINLAT=%MINLAT%, MAXLAT=%MAXLAT%;
 let wps=[], strokes=[], mode='draw', dragging=-1, drawing=false,
     zoom=1, imgW=0, imgH=0, showingBase=false, crop=null, cropDrag=null,
-    labs=[], labOverrides={}, labGrid=null, dragLabel=-1;
+    labs=[], labOverrides={}, labGrid=null, labMmpp=null, dragLabel=-1,
+    customLabels=[], dragCustom=-1;
 const img=document.getElementById('map'), cv=document.getElementById('cv'),
       ctx=cv.getContext('2d'), status=document.getElementById('status'),
       wrap=document.getElementById('wrap'), stage=document.getElementById('stage'),
@@ -108,9 +112,9 @@ function setMode(m){ mode=m;
     : m=='crop'
     ? '<b>Drag</b> a rectangle: that area becomes the board, scaled to 255 mm '
       + 'on its long side. Hole spacing is computed at board scale.'
-    : '<b>Drag</b> a label to place it by hand (blue = hand-placed). '
-      + '<b>Right-click</b>: revert to automatic. The baked-in map text moves '
-      + 'after Save &amp; Re-route.';
+    : '<b>Drag</b> a label to place it by hand (blue = hand-placed, gold = your '
+      + 'place names). <b>Right-click</b>: revert auto label / delete place name. '
+      + 'The baked-in map text moves after Save &amp; Re-route.';
   draw(); }
 function drawCrop(){
   const c = cropDrag || crop;
@@ -132,19 +136,32 @@ function labelBox(lb){
   const s = imgW/(labGrid?labGrid[0]:imgW);
   return [x, y, lb.hw*s, lb.hh*s];
 }
+function customBox(cl){
+  const [x,y]=ll2px([cl.lon,cl.lat]);
+  const s = imgW/(labGrid?labGrid[0]:imgW);
+  const size = cl.size||6.5, mmpp = labMmpp||0.07;
+  return [x, y, cl.text.length*size*0.36/mmpp*s, size*0.62/mmpp*s];
+}
+function drawOneLabel(x,y,hw,hh,text,fill,box){
+  ctx.font='bold '+Math.max(8, 2*hh*0.9)+'px sans-serif';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.strokeStyle='rgba(0,0,0,.85)'; ctx.lineWidth=Math.max(2,4/zoom);
+  ctx.strokeText(text,x,y);
+  ctx.fillStyle=fill; ctx.fillText(text,x,y);
+  ctx.strokeStyle=box; ctx.lineWidth=Math.max(1,1.5/zoom);
+  ctx.strokeRect(x-hw,y-hh,2*hw,2*hh);
+}
 function drawLabels(){
   if(mode!='labels') return;
   for(const lb of labs){
     const [x,y,hw,hh]=labelBox(lb);
-    ctx.font='bold '+Math.max(8, 2*hh*0.9)+'px sans-serif';
-    ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.strokeStyle='rgba(0,0,0,.85)'; ctx.lineWidth=Math.max(2,4/zoom);
-    ctx.strokeText(lb.text,x,y);
-    ctx.fillStyle = labOverrides[lb.text] ? '#7dd3fc' : '#ffffff';
-    ctx.fillText(lb.text,x,y);
-    ctx.strokeStyle = labOverrides[lb.text] ? 'rgba(125,211,252,.7)' : 'rgba(255,255,255,.35)';
-    ctx.lineWidth=Math.max(1,1.5/zoom);
-    ctx.strokeRect(x-hw,y-hh,2*hw,2*hh);
+    drawOneLabel(x,y,hw,hh,lb.text,
+      labOverrides[lb.text] ? '#7dd3fc' : '#ffffff',
+      labOverrides[lb.text] ? 'rgba(125,211,252,.7)' : 'rgba(255,255,255,.35)');
+  }
+  for(const cl of customLabels){
+    const [x,y,hw,hh]=customBox(cl);
+    drawOneLabel(x,y,hw,hh,cl.text,'#fbbf24','rgba(251,191,36,.7)');
   }
 }
 function draw(){
@@ -196,10 +213,22 @@ function labelHit(x,y){
   }
   return -1;
 }
+function customHit(x,y){
+  for(let i=customLabels.length-1;i>=0;i--){
+    const [lx,ly,hw,hh]=customBox(customLabels[i]);
+    if(Math.abs(x-lx)<hw && Math.abs(y-ly)<hh) return i;
+  }
+  return -1;
+}
 cv.addEventListener('mousedown', e=>{ const [x,y]=evPos(e);
   if(mode=='labels'){
+    const ci=customHit(x,y);
+    if(e.button==2){
+      if(ci>=0){ customLabels.splice(ci,1); }
+      else { const i=labelHit(x,y); if(i>=0) delete labOverrides[labs[i].text]; }
+      draw(); return; }
+    if(ci>=0){ dragCustom=ci; return; }
     const i=labelHit(x,y);
-    if(e.button==2){ if(i>=0){ delete labOverrides[labs[i].text]; draw(); } return; }
     if(i>=0) dragLabel=i;
     return; }
   if(mode=='crop'){
@@ -218,7 +247,11 @@ cv.addEventListener('mousedown', e=>{ const [x,y]=evPos(e);
   draw(); });
 cv.addEventListener('mousemove', e=>{ const [x,y]=evPos(e);
   if(mode=='labels'){
-    if(dragLabel>=0){
+    if(dragCustom>=0){
+      const ll=px2ll(x,y);
+      customLabels[dragCustom].lon=ll[0]; customLabels[dragCustom].lat=ll[1];
+      draw(); }
+    else if(dragLabel>=0){
       const ll=px2ll(x,y);
       labs[dragLabel].lon=ll[0]; labs[dragLabel].lat=ll[1];
       labOverrides[labs[dragLabel].text]=[ll[0],ll[1]];
@@ -237,7 +270,7 @@ cv.addEventListener('mousemove', e=>{ const [x,y]=evPos(e);
     return; }
   if(dragging>=0){ wps[dragging]=px2ll(x,y); draw(); } });
 window.addEventListener('mouseup', ()=>{
-  dragLabel=-1;
+  dragLabel=-1; dragCustom=-1;
   if(cropDrag){ if(Math.abs(cropDrag[2]-cropDrag[0])>1e-4) crop=cropDrag.slice(0,4);
     cropDrag=null; draw(); }
   if(drawing){ drawing=false;
@@ -247,11 +280,20 @@ window.addEventListener('mouseup', ()=>{
 cv.addEventListener('contextmenu', e=>e.preventDefault());
 function payload(){ return JSON.stringify({
   mode: mode=='wp' ? 'waypoints' : 'drawn', waypoints: wps, crop: crop,
-  label_overrides: labOverrides,
+  label_overrides: labOverrides, custom_labels: customLabels,
   min_radius_mm: parseFloat(document.getElementById('radius').value)||8 }); }
 async function loadLabels(){ try{
   const r=await fetch('/labels'); const d=await r.json();
-  labs=d.labels||[]; labGrid=d.grid||null; draw(); }catch(e){} }
+  labs=(d.labels||[]).filter(l=>!l.custom);
+  labGrid=d.grid||null; labMmpp=d.mmpp||null; draw(); }catch(e){} }
+document.getElementById('addLabel').onclick=()=>{
+  const t=document.getElementById('newLabel').value.trim();
+  if(!t) return;
+  const cx_=(wrap.scrollLeft+wrap.clientWidth/2)/zoom, cy_=(wrap.scrollTop+wrap.clientHeight/2)/zoom;
+  const ll=px2ll(cx_,cy_);
+  customLabels.push({text:t, lon:ll[0], lat:ll[1], size:6.5});
+  document.getElementById('newLabel').value='';
+  setMode('labels'); };
 async function loadRegions(){
   const d=await (await fetch('/regions')).json();
   const sel=document.getElementById('regionSel');
@@ -269,6 +311,7 @@ document.getElementById('regionSel').onchange = async e=>{
 async function load(){ const r=await fetch('/waypoints'); const d=await r.json();
   wps=d.waypoints||[]; strokes=[]; crop=d.crop||null;
   labOverrides=d.label_overrides||{};
+  customLabels=d.custom_labels||[];
   if(d.min_radius_mm) document.getElementById('radius').value=d.min_radius_mm;
   setMode(d.mode=='drawn'?'draw':'wp'); loadLabels(); }
 document.getElementById('modeDraw').onclick=()=>setMode('draw');
@@ -370,11 +413,12 @@ class H(BaseHTTPRequestHandler):
                 size = lb.get("size", 9.6)
                 out.append({
                     "text": lb["text"],
+                    "custom": lb.get("custom", False),
                     "lon": lo + lb["x"] / W * (hi - lo),
                     "lat": la1 - lb["y"] / Hg * (la1 - la0),
                     "hw": len(lb["text"]) * size * 0.36 / mmpp,
                     "hh": size * 0.62 / mmpp})
-            self._send(200, json.dumps({"labels": out, "grid": [W, Hg]}))
+            self._send(200, json.dumps({"labels": out, "grid": [W, Hg], "mmpp": mmpp}))
         else:
             self._send(404, "{}")
 

@@ -208,8 +208,19 @@ def lane_mask(k):
 
 FEATS = {}
 import os as _os
-if _os.path.exists("data/features.json"):
-    FEATS = json.load(open("data/features.json"))
+_fp = f"data/features_{d.get('region', '')}.json"
+if _os.path.exists(_fp):
+    FEATS = json.load(open(_fp))
+
+def punch_holes(arr):
+    """No raised garnish may ever print over a peg hole."""
+    punch = Image.new("1", (nxf, nyf), 0)
+    dp = ImageDraw.Draw(punch)
+    rp = (HOLE_R + 0.5) / PITCH_F
+    for hx, hy in holes_mm:
+        px_, py_ = hx / PITCH_F, (BH - hy) / PITCH_F
+        dp.ellipse([px_ - rp, py_ - rp, px_ + rp, py_ + rp], fill=1)
+    return arr & ~np.array(punch, bool)
 
 def ll_to_mm(lon, lat):
     bx = d["bbox"]; GW, GH = d["grid"]
@@ -270,15 +281,7 @@ def labels_mask():
                 for p in (pts[0], pts[-1]):
                     dr2.ellipse([p[0] - w / 2, p[1] - w / 2, p[0] + w / 2, p[1] + w / 2], fill=255)
         arr |= np.array(outer, bool) & ~np.array(inner, bool)
-    # labels/rings must NEVER print over a peg hole: punch clearance discs
-    punch = Image.new("1", (nxf, nyf), 0)
-    dp = ImageDraw.Draw(punch)
-    rp = (HOLE_R + 0.5) / PITCH_F
-    for hx, hy in holes_mm:
-        px_, py_ = hx / PITCH_F, (BH - hy) / PITCH_F
-        dp.ellipse([px_ - rp, py_ - rp, px_ + rp, py_ + rp], fill=1)
-    arr &= ~np.array(punch, bool)
-    return arr
+    return punch_holes(arr)
 
 def roads_mask():
     img = Image.new("1", (nxf, nyf), 0)
@@ -291,7 +294,20 @@ def roads_mask():
             pts.append((x_mm / PITCH_F, (BH - y_mm) / PITCH_F))
         if len(pts) > 1:
             dr.line(pts, fill=1, width=wpx, joint="curve")
-    return img
+    return punch_holes(np.array(img, bool))
+
+def rivers_mask():
+    img = Image.new("1", (nxf, nyf), 0)
+    dr = ImageDraw.Draw(img)
+    wpx = max(2, int(0.7 / PITCH_F))
+    for rv in FEATS.get("rivers", []):
+        pts = []
+        for lon, lat in rv["pts"]:
+            x_mm, y_mm = ll_to_mm(lon, lat)
+            pts.append((x_mm / PITCH_F, (BH - y_mm) / PITCH_F))
+        if len(pts) > 1:
+            dr.line(pts, fill=1, width=wpx, joint="curve")
+    return punch_holes(np.array(img, bool))
 
 objects = [("ocean", "#2E6FA3", V_sea, F_sea),
            ("shoreline", "#E2CF9C", V_sh, F_sh),
@@ -313,6 +329,10 @@ rm = mask_mesh(roads_mask(), proud=0.22, embed=0.10)
 if rm:
     objects.append(("roads", "#4A4A4A", *rm))
     print(f"roads: {len(rm[0]):,} verts, {len(rm[1]):,} tris")
+rv = mask_mesh(rivers_mask(), proud=0.18, embed=0.12)
+if rv:
+    objects.append(("rivers", "#4FA3D9", *rv))
+    print(f"rivers: {len(rv[0]):,} verts, {len(rv[1]):,} tris")
 
 # ---------------- write 3MF ----------------
 def obj_xml(oid, name, color, V, F):
