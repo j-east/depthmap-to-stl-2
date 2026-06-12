@@ -67,6 +67,7 @@ HTML = """<!DOCTYPE html>
     <button id="zin">＋</button><button id="zout">−</button><button id="zfit">Fit</button>
   </div>
   <button id="base">Toggle basemap</button>
+  <button id="gmaps">🌍 Compare in Google Maps</button>
   <label>Min bend radius (mm)
     <input type="number" id="radius" value="8" min="3" max="25" step="0.5"></label>
   <label>New place name
@@ -371,6 +372,15 @@ document.getElementById('zout').onclick=()=>setZoom(zoom/1.5, wrap.clientWidth/2
 document.getElementById('zfit').onclick=fit;
 document.getElementById('base').onclick=()=>{ showingBase=!showingBase;
   img.src=(showingBase?'/base.png?':'/map.png?')+Date.now(); };
+document.getElementById('gmaps').onclick=()=>{
+  const cx_=(wrap.scrollLeft+wrap.clientWidth/2)/zoom, cy_=(wrap.scrollTop+wrap.clientHeight/2)/zoom;
+  const ll=px2ll(Math.min(Math.max(cx_,0),imgW), Math.min(Math.max(cy_,0),imgH));
+  // match zoom: meters per screen px here vs Google's 156543*cos(lat)/2^z
+  const mPerImgPx=(MAXLAT-MINLAT)*111320/imgH;
+  const z=Math.min(18, Math.max(5, Math.round(
+    Math.log2(156543.03*Math.cos(ll[1]*Math.PI/180)/(mPerImgPx/zoom)))));
+  window.open('https://www.google.com/maps/@?api=1&map_action=map&center='
+    +ll[1].toFixed(5)+','+ll[0].toFixed(5)+'&zoom='+z+'&basemap=terrain','_blank'); };
 document.getElementById('undo').onclick=()=>{
   if(strokes.length){ wps.length=strokes.pop(); } else { wps.pop(); } draw(); };
 document.getElementById('save').onclick = async ()=>{
