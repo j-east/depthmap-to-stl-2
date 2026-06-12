@@ -504,8 +504,9 @@ def _attempt(ic, d_arc, text, size_mm, mults):
                     best, best_pen = (x, y), pen
     return best[0], best[1], best_pen, hw, hh
 
-def label_pos(ic, d_arc, text, mults=(1.0, 1.2, 1.45, 1.7, 2.0, 2.4, 2.8)):
-    """Find a home for the label; crowded spots get progressively smaller text."""
+def label_pos(ic, d_arc, text, mults=(1.0, 1.2, 1.45, 1.7, 2.0, 2.4, 2.8), sizes=None):
+    """Find a home for the label; crowded spots get progressively smaller text
+    (or exactly the given sizes). Returns (x, y, size_mm, penalty)."""
     if text in LABEL_OVERRIDES:
         # hand-placed in the editor: position is law; a hand-set size is too,
         # otherwise shrink only if dropped onto another label or a hole
@@ -516,40 +517,51 @@ def label_pos(ic, d_arc, text, mults=(1.0, 1.2, 1.45, 1.7, 2.0, 2.4, 2.8)):
         else:
             (lon, lat), forced = ov, None
         x, y = lonlat_to_px(lon, lat)
-        sizes = (forced,) if forced else (LABEL_MM, 7.4, 6.2)
+        sizes = (forced,) if forced else (sizes or (LABEL_MM, 7.4, 6.2))
         for size_mm in sizes:
             hw = len(text) * size_mm * 0.36 / MM_PER_PX
             hh = size_mm * 0.62 / MM_PER_PX
             if forced or rect_penalty(x, y, hw, hh) < 500:
                 break
         placed_rects.append((x, y, hw, hh))
-        return float(x), float(y), size_mm
-    overall, overall_score = None, 1e18
-    for size_mm in (LABEL_MM, 7.4, 6.2):
+        return float(x), float(y), size_mm, 0.0
+    overall, overall_score, overall_pen = None, 1e18, 1e18
+    for size_mm in (sizes or (LABEL_MM, 7.4, 6.2)):
         x, y, pen, hw, hh = _attempt(ic, d_arc, text, size_mm, mults)
         if pen == 0:
             placed_rects.append((x, y, hw, hh))
-            return float(x), float(y), size_mm
+            return float(x), float(y), size_mm, 0.0
         score = pen + (LABEL_MM - size_mm) * 6
         if score < overall_score:
-            overall, overall_score = (x, y, size_mm, hw, hh), score
+            overall, overall_score, overall_pen = (x, y, size_mm, hw, hh), score, pen
     x, y, size_mm, hw, hh = overall
-    print(f"  label '{text}': least-bad fallback at {size_mm} mm, penalty {overall_score:.0f}")
     placed_rects.append((x, y, hw, hh))
-    return float(x), float(y), size_mm
+    return float(x), float(y), size_mm, float(overall_pen)
 
 labels = []
-x_, y_, s_ = label_pos(ic0, -cluster_len / 2 - hole_step * 5 - 8.0 / MM_PER_PX,
-                       "START", mults=(1.0, 1.2, 1.45))
+x_, y_, s_, _ = label_pos(ic0, -cluster_len / 2 - hole_step * 5 - 8.0 / MM_PER_PX,
+                          "START", mults=(1.0, 1.2, 1.45))
 labels.append({"text": "START", "x": x_, "y": y_, "angle": 0.0, "size": s_})
-x_, y_, s_ = label_pos(icf, foff + hole_step * 2.5 + 8.0 / MM_PER_PX,
-                       "END", mults=(1.0, 1.2, 1.45))
+x_, y_, s_, _ = label_pos(icf, foff + hole_step * 2.5 + 8.0 / MM_PER_PX,
+                          "END", mults=(1.0, 1.2, 1.45))
 labels.append({"text": "END", "x": x_, "y": y_, "angle": 0.0, "size": s_})
-for g, c in enumerate(centers):
-    ic = min(np.searchsorted(u, c), len(u) - 1)
-    txt = str((g + 1) * 5)
-    x_, y_, s_ = label_pos(ic, 0.0, txt)
-    labels.append({"text": txt, "x": x_, "y": y_, "angle": 0.0, "size": s_})
+
+# all count labels share one size: the largest at which every one of the 24
+# finds a clean home (crowded boards step the whole set down together)
+for uni in (LABEL_MM, 8.4, 7.4, 6.6):
+    snapshot = list(placed_rects)
+    nlabels, worst = [], 0.0
+    for g, c in enumerate(centers):
+        ic = min(np.searchsorted(u, c), len(u) - 1)
+        txt = str((g + 1) * 5)
+        x_, y_, s_, pen = label_pos(ic, 0.0, txt, sizes=(uni,))
+        nlabels.append({"text": txt, "x": x_, "y": y_, "angle": 0.0, "size": s_})
+        worst = max(worst, pen)
+    if worst < 300:
+        break
+    placed_rects[:] = snapshot
+print(f"count labels: uniform {uni} mm (worst penalty {worst:.0f})")
+labels.extend(nlabels)
 
 # user-added place names from the editor: position and text are law
 for cl in CUSTOM_LABELS:
@@ -566,17 +578,17 @@ for c in centers:
     pts = [list(lane_pt(k, ic, 2 * hole_step)) for k in range(3)]
     group_rings.append({"pts": pts, "half_w": float(2.5 / MM_PER_PX)})
 
-# starting block: one capsule around both 2x3 start rows
+# starting block: a FILLED colored pad under both 2x3 start rows
 ia = min(np.searchsorted(u, max(u[ic0] + offs[0], 0)), len(u) - 1)
 ib = min(np.searchsorted(u, max(u[ic0] + offs[1], 0)), len(u) - 1)
-group_rings.append({"pts": [[float(rx[ia]), float(ry[ia])], [float(rx[ib]), float(ry[ib])]],
-                    "half_w": float(LANE_OFFSET_PX * squeeze[ic0] + 2.5 / MM_PER_PX)})
+start_block = {"pts": [[float(rx[ia]), float(ry[ia])], [float(rx[ib]), float(ry[ib])]],
+               "half_w": float(LANE_OFFSET_PX * squeeze[ic0] + 2.5 / MM_PER_PX)}
 
 json.dump({"lanes": [[list(map(float, l[0])), list(map(float, l[1]))] for l in lanes],
            "holes": [[(float(x), float(y)) for x, y in hl] for hl in holes],
            "bbox": [MINLON, MINLAT, MAXLON, MAXLAT], "grid": [W, H],
            "mm_per_px": MM_PER_PX, "crop_px": [cx0, cy0, cx1, cy1],
-           "labels": labels, "group_rings": group_rings,
+           "labels": labels, "group_rings": group_rings, "start_block": start_block,
            "datum_m": DATUM_M, "src_file": SRC, "region": ACTIVE,
            "exag": EXAG_R, "src_m_per_px": M_SRC,
            "spec": {"lane_sp_mm": LANE_SP_MM, "hole_step_mm": hole_step * MM_PER_PX,
@@ -587,6 +599,16 @@ json.dump({"lanes": [[list(map(float, l[0])), list(map(float, l[1]))] for l in l
 # ---- render ----
 pim = render_base()
 draw = ImageDraw.Draw(pim)
+# starting block pad, under everything
+_sb = Image.new("L", pim.size, 0)
+_sd = ImageDraw.Draw(_sb)
+_sp = [tuple(p) for p in start_block["pts"]]
+_w = 2 * start_block["half_w"]
+_sd.line(_sp, fill=255, width=max(2, int(_w)))
+for p in (_sp[0], _sp[-1]):
+    _sd.ellipse([p[0] - _w / 2, p[1] - _w / 2, p[0] + _w / 2, p[1] + _w / 2], fill=255)
+pim.paste((96, 178, 110), mask=_sb)
+
 # draw at true physical scale: 1 mm lines, 3.2 mm peg holes
 LINE_W = max(2, int(1.0 / MM_PER_PX))
 HOLE_R = 1.6 / MM_PER_PX

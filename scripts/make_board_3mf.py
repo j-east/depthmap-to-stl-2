@@ -193,6 +193,8 @@ def mask_mesh(img, proud=RIB_H, embed=RIB_EMBED):
         return None
     return block_mesh(m, zsurf_f + proud, zsurf_f - embed, PITCH_F)
 
+HOLE_COLLARS = True   # each lane rims its OWN holes in its color
+
 def lane_mask(k):
     img = Image.new("1", (nxf, nyf), 0)
     dr = ImageDraw.Draw(img)
@@ -204,6 +206,17 @@ def lane_mask(k):
     for hx, hy in holes_mm:  # part the ribbon around every hole
         px_, py_ = hx / PITCH_F, (BH - hy) / PITCH_F
         dr.ellipse([px_ - rcut, py_ - rcut, px_ + rcut, py_ + rcut], fill=0)
+    if HOLE_COLLARS:
+        # ring this lane's own hole mouths in the lane color
+        own = [px_to_mm(x, y) for x, y in d["holes"][k]]
+        rco = (HOLE_R + 0.6) / PITCH_F
+        rbo = (HOLE_R + 0.05) / PITCH_F
+        for hx, hy in own:
+            px_, py_ = hx / PITCH_F, (BH - hy) / PITCH_F
+            dr.ellipse([px_ - rco, py_ - rco, px_ + rco, py_ + rco], fill=1)
+        for hx, hy in own:
+            px_, py_ = hx / PITCH_F, (BH - hy) / PITCH_F
+            dr.ellipse([px_ - rbo, py_ - rbo, px_ + rbo, py_ + rbo], fill=0)
     return img
 
 FEATS = {}
@@ -314,6 +327,24 @@ objects = [("ocean", "#2E6FA3", V_sea, F_sea),
            ("land", "#6B7F5E", V_land, F_land)]
 if alpine:
     objects.append(("alpine", "#F2F3F5", *alpine))
+
+# starting block: filled colored pad under the 2x3 start rows
+sb = d.get("start_block")
+if sb:
+    sbm = Image.new("L", (nxf, nyf), 0)
+    sd = ImageDraw.Draw(sbm)
+    spts = []
+    for gx, gy in sb["pts"]:
+        x_mm, y_mm = px_to_mm(gx, gy)
+        spts.append((x_mm / PITCH_F, (BH - y_mm) / PITCH_F))
+    w = 2 * sb["half_w"] * MMPP / PITCH_F
+    sd.line(spts, fill=255, width=max(2, int(w)))
+    for p in (spts[0], spts[-1]):
+        sd.ellipse([p[0] - w / 2, p[1] - w / 2, p[0] + w / 2, p[1] + w / 2], fill=255)
+    sbmesh = mask_mesh(punch_holes(np.array(sbm, bool)), proud=0.4, embed=0.12)
+    if sbmesh:
+        objects.append(("start_block", "#4CAF50", *sbmesh))
+        print(f"start_block: {len(sbmesh[0]):,} verts, {len(sbmesh[1]):,} tris")
 for k, (name, color) in enumerate([("lane_red", "#E03232"),
                                    ("lane_gold", "#F0C832"),
                                    ("lane_white", "#F5F5F0")]):
