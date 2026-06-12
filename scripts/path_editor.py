@@ -81,6 +81,7 @@ HTML = """<!DOCTYPE html>
   <label>Selected label size (mm) — or scroll over a label
     <input type="number" id="labSize" value="9.6" min="3" max="16" step="0.5"></label>
   <button class="primary" id="route">Save &amp; Re-route</button>
+  <button class="primary" id="build" style="background:#16a34a">🖨 Build &amp; open in Bambu Studio</button>
   <button id="save">Save only</button>
   <button id="undo">Undo stroke</button>
   <button id="nocrop">Clear crop (full map)</button>
@@ -402,6 +403,11 @@ document.getElementById('save').onclick = async ()=>{
   status.textContent='saved ('+wps.length+' points)'; };
 document.getElementById('revert').onclick = load;
 document.getElementById('clear').onclick = ()=>{ wps=[]; strokes=[]; draw(); };
+document.getElementById('build').onclick = async ()=>{
+  status.textContent='building 3MF… (1-2 min)';
+  const r=await fetch('/build',{method:'POST',body:'{}'});
+  const out=await r.json();
+  status.textContent=out.ok ? out.log+'\\nopened in Bambu Studio' : 'FAILED:\\n'+out.log; };
 document.getElementById('route').onclick = async ()=>{
   status.textContent='routing… (1-2 min)';
   const r=await fetch('/run',{method:'POST',body:payload()});
@@ -503,6 +509,30 @@ class H(BaseHTTPRequestHandler):
         if self.path == "/waypoints":
             json.dump(body, open(path, "w"), indent=1)
             self._send(200, '{"ok":true}')
+        elif self.path == "/build":
+            act = _active()
+            try:
+                rl = json.load(open(os.path.join(ROOT, "data/route_lanes.json")))
+                if rl.get("region") != act:
+                    self._send(200, json.dumps({"ok": False,
+                        "log": f"layout is for '{rl.get('region')}' — Save & Re-route first"}))
+                    return
+            except Exception:
+                self._send(200, json.dumps({"ok": False, "log": "no layout yet — Save & Re-route first"}))
+                return
+            if not run_lock.acquire(blocking=False):
+                self._send(409, json.dumps({"ok": False, "log": "a run is already in progress"}))
+                return
+            try:
+                r = subprocess.run(["python3", "scripts/make_board_3mf.py"], cwd=ROOT,
+                                   capture_output=True, text=True, timeout=900)
+                log = "\n".join((r.stdout + r.stderr).strip().splitlines()[-6:])
+                ok = r.returncode == 0
+                if ok:
+                    subprocess.run(["open", os.path.join(ROOT, f"data/board_{act}.3mf")])
+                self._send(200, json.dumps({"ok": ok, "log": log}))
+            finally:
+                run_lock.release()
         elif self.path == "/region_params":
             cfg = _regions_cfg()
             reg = cfg["regions"][cfg["active"]]
