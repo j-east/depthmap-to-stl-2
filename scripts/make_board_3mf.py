@@ -285,6 +285,13 @@ def labels_mask():
         x_mm, y_mm = ll_to_mm(b["lon"], b["lat"])
         px_, py_ = x_mm / PITCH_F, (BH - y_mm) / PITCH_F
         dr.ellipse([px_ - rb, py_ - rb, px_ + rb, py_ + rb], fill=1)
+    ar = d.get("arrow")
+    if ar:  # direction-of-play arrow at the start
+        apts = []
+        for gx, gy in ar["pts"]:
+            x_mm, y_mm = px_to_mm(gx, gy)
+            apts.append((x_mm / PITCH_F, (BH - y_mm) / PITCH_F))
+        dr.polygon(apts, fill=1)
     # capsule outline around each group of 5
     arr = np.array(img, bool)
     rings = d.get("group_rings", [])

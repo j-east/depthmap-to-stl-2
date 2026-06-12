@@ -249,7 +249,8 @@ else:
 
     py, px = np.array(path) // w, np.array(path) % w
     fx, fy = px.astype(float) * DOWN + DOWN / 2, py.astype(float) * DOWN + DOWN / 2
-    fx = uniform_filter1d(fx, 21, mode="wrap"); fy = uniform_filter1d(fy, 21, mode="wrap")
+    _wm = "wrap" if nodes[0] == nodes[-1] else "nearest"
+    fx = uniform_filter1d(fx, 21, mode=_wm); fy = uniform_filter1d(fy, 21, mode=_wm)
 
 # resample to even arc length (full-res px)
 d = np.hypot(np.diff(fx), np.diff(fy)); s = np.concatenate([[0], np.cumsum(d)])
@@ -302,19 +303,23 @@ u = np.concatenate([[0], np.cumsum(d_)])
 total = u[-1]
 
 # ---- frame + lanes: squeeze only where curvature would cross the offsets ----
-rx = uniform_filter1d(rx, 25, mode="wrap"); ry = uniform_filter1d(ry, 25, mode="wrap")
+# open courses must NOT wrap-smooth (it folds the two ends toward each other)
+CLOSED = math.hypot(rx[-1] - rx[0], ry[-1] - ry[0]) < 12.0 / MM_PER_PX
+SMODE = "wrap" if CLOSED else "nearest"
+print(f"course is {'a closed loop' if CLOSED else 'open (start and end apart)'}")
+rx = uniform_filter1d(rx, 25, mode=SMODE); ry = uniform_filter1d(ry, 25, mode=SMODE)
 tx = np.gradient(rx); ty = np.gradient(ry)
 tl = np.hypot(tx, ty); tx /= tl; ty /= tl
 nx, ny = -ty, tx
 ang = np.unwrap(np.arctan2(ty, tx))
-curv = uniform_filter1d(np.abs(np.gradient(ang)) / DS, 51, mode="wrap")  # 1/px
+curv = uniform_filter1d(np.abs(np.gradient(ang)) / DS, 51, mode=SMODE)  # 1/px
 radius = 1.0 / np.maximum(curv, 1e-9)
 squeeze = np.clip(radius / (3.5 * LANE_OFFSET_PX), SQUEEZE_MIN, 1.0)
-squeeze = uniform_filter1d(squeeze, 101, mode="wrap")
+squeeze = uniform_filter1d(squeeze, 101, mode=SMODE)
 lanes = []
 for k in (-1, 0, 1):
-    lx = uniform_filter1d(rx + k * LANE_OFFSET_PX * squeeze * nx, 25, mode="wrap")
-    ly = uniform_filter1d(ry + k * LANE_OFFSET_PX * squeeze * ny, 25, mode="wrap")
+    lx = uniform_filter1d(rx + k * LANE_OFFSET_PX * squeeze * nx, 25, mode=SMODE)
+    ly = uniform_filter1d(ry + k * LANE_OFFSET_PX * squeeze * ny, 25, mode=SMODE)
     lanes.append((lx, ly))
 
 # each lane spaces its holes along ITS OWN arc length, so spacing holds
@@ -350,7 +355,7 @@ def site_ok(i, hs_idx, hole_step):
             return False
         for nb in tree.query_ball_point([x, y], PROX_PX):
             da = abs(u[nb] - u[min(i, len(u) - 1)])
-            if min(da, total - da) > ARC_NEAR_PX:
+            if (min(da, total - da) if CLOSED else da) > ARC_NEAR_PX:
                 return False
     return pdist(np.array(pts)).min() >= HOLE_MIN_PX
 
@@ -539,12 +544,15 @@ def label_pos(ic, d_arc, text, mults=(1.0, 1.2, 1.45, 1.7, 2.0, 2.4, 2.8), sizes
     return float(x), float(y), size_mm, float(overall_pen)
 
 labels = []
-x_, y_, s_, _ = label_pos(ic0, -cluster_len / 2 - hole_step * 5 - 8.0 / MM_PER_PX,
-                          "START", mults=(1.0, 1.2, 1.45))
-labels.append({"text": "START", "x": x_, "y": y_, "angle": 0.0, "size": s_})
-x_, y_, s_, _ = label_pos(icf, foff + hole_step * 2.5 + 8.0 / MM_PER_PX,
-                          "END", mults=(1.0, 1.2, 1.45))
-labels.append({"text": "END", "x": x_, "y": y_, "angle": 0.0, "size": s_})
+# direction-of-play arrow just before the starting block (replaces START/END)
+i_ar = min(np.searchsorted(u, max(u[ic0] + offs[0] - 7.0 / MM_PER_PX, 0)), len(u) - 1)
+_dx, _dy = tx[i_ar], ty[i_ar]
+_nx, _ny = -_dy, _dx
+AL, AW = 7.0 / MM_PER_PX, 6.0 / MM_PER_PX
+_px, _py = rx[i_ar], ry[i_ar]
+arrow = {"pts": [[float(_px + _dx * AL * 0.6), float(_py + _dy * AL * 0.6)],
+                 [float(_px - _dx * AL * 0.4 + _nx * AW / 2), float(_py - _dy * AL * 0.4 + _ny * AW / 2)],
+                 [float(_px - _dx * AL * 0.4 - _nx * AW / 2), float(_py - _dy * AL * 0.4 - _ny * AW / 2)]]}
 
 # all count labels share one size: the largest at which every one of the 24
 # finds a clean home (crowded boards step the whole set down together)
@@ -589,6 +597,7 @@ json.dump({"lanes": [[list(map(float, l[0])), list(map(float, l[1]))] for l in l
            "bbox": [MINLON, MINLAT, MAXLON, MAXLAT], "grid": [W, H],
            "mm_per_px": MM_PER_PX, "crop_px": [cx0, cy0, cx1, cy1],
            "labels": labels, "group_rings": group_rings, "start_block": start_block,
+           "arrow": arrow,
            "datum_m": DATUM_M, "src_file": SRC, "region": ACTIVE,
            "exag": EXAG_R, "src_m_per_px": M_SRC,
            "spec": {"lane_sp_mm": LANE_SP_MM, "hole_step_mm": hole_step * MM_PER_PX,
@@ -608,6 +617,7 @@ _sd.line(_sp, fill=255, width=max(2, int(_w)))
 for p in (_sp[0], _sp[-1]):
     _sd.ellipse([p[0] - _w / 2, p[1] - _w / 2, p[0] + _w / 2, p[1] + _w / 2], fill=255)
 pim.paste((96, 178, 110), mask=_sb)
+draw.polygon([tuple(p) for p in arrow["pts"]], fill=(255, 255, 255), outline=(0, 0, 0))
 
 # draw at true physical scale: 1 mm lines, 3.2 mm peg holes
 LINE_W = max(2, int(1.0 / MM_PER_PX))
