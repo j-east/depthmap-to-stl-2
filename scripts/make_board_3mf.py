@@ -109,7 +109,7 @@ def block_mesh(mask, ztop, zbot, pitch):
     return V.astype(np.float32), np.concatenate(F)
 
 # ---------------- base ----------------
-nyb, nxb = int(round(BH / PITCH_B)), int(round(BW / PITCH_B))
+nyb, nxb = int(BH / PITCH_B), int(BW / PITCH_B)  # floor: never exceed the board
 crow = np.arange(nyb + 1); ccol = np.arange(nxb + 1)
 CX, CY = np.meshgrid(ccol * PITCH_B, BH - crow * PITCH_B)
 el_c = sample_el(CX, CY)
@@ -132,6 +132,8 @@ if el_c.max() > 0:
 # bored peg holes: a plain vertical bore into the local surface (no pad —
 # on slopes the rim is slightly slanted, which pegs don't mind)
 holes_mm = [px_to_mm(x, y) for hl in d["holes"] for x, y in hl]
+storage_mm = [px_to_mm(x, y) for x, y in d.get("storage_holes", [])]
+holes_mm = holes_mm + storage_mm
 for hx, hy in holes_mm:
     c0 = int(hx / PITCH_B); r0 = int((BH - hy) / PITCH_B)
     w = int(HOLE_R / PITCH_B) + 2
@@ -292,6 +294,12 @@ def labels_mask():
             x_mm, y_mm = px_to_mm(gx, gy)
             apts.append((x_mm / PITCH_F, (BH - y_mm) / PITCH_F))
         dr.polygon(apts, fill=1)
+    for p1, p2 in (d.get("end_marker") or {}).get("lines", []):  # finish line(s)
+        lpts = []
+        for gx, gy in (p1, p2):
+            x_mm, y_mm = px_to_mm(gx, gy)
+            lpts.append((x_mm / PITCH_F, (BH - y_mm) / PITCH_F))
+        dr.line(lpts, fill=1, width=max(2, int(1.0 / PITCH_F)))
     # capsule outline around each group of 5
     arr = np.array(img, bool)
     rings = d.get("group_rings", [])
@@ -329,11 +337,17 @@ def rivers_mask():
     dr = ImageDraw.Draw(img)
     wpx = max(2, int(0.7 / PITCH_F))
     for rv in FEATS.get("rivers", []):
-        pts = []
+        pts, in_mm = [], 0.0
+        prev_in = None
         for lon, lat in rv["pts"]:
             x_mm, y_mm = ll_to_mm(lon, lat)
+            inside = 0 <= x_mm <= BW and 0 <= y_mm <= BH
+            if inside and prev_in:
+                in_mm += math.hypot(x_mm - prev_in[0], y_mm - prev_in[1])
+            prev_in = (x_mm, y_mm) if inside else None
             pts.append((x_mm / PITCH_F, (BH - y_mm) / PITCH_F))
-        if len(pts) > 1:
+        # skip clipped crumbs: a river must show at least 10 mm on the board
+        if len(pts) > 1 and in_mm >= 10.0:
             dr.line(pts, fill=1, width=wpx, joint="curve")
     return punch_holes(np.array(img, bool))
 
@@ -356,6 +370,14 @@ if sb:
     sd.line(spts, fill=255, width=max(2, int(w)))
     for p in (spts[0], spts[-1]):
         sd.ellipse([p[0] - w / 2, p[1] - w / 2, p[0] + w / 2, p[1] + w / 2], fill=255)
+    sto = d.get("storage")
+    if sto:  # peg storage pad joins the start-block object
+        x_mm, y_mm = px_to_mm(sto["x"], sto["y"])
+        hwf = sto["hw"] * MMPP / PITCH_F
+        hhf = sto["hh"] * MMPP / PITCH_F
+        cxf, cyf = x_mm / PITCH_F, (BH - y_mm) / PITCH_F
+        sd.rounded_rectangle([cxf - hwf, cyf - hhf, cxf + hwf, cyf + hhf],
+                             radius=int(2.5 / PITCH_F), fill=255)
     sbmesh = mask_mesh(punch_holes(np.array(sbm, bool)), proud=0.4, embed=0.12)
     if sbmesh:
         objects.append(("start_block", "#4CAF50", *sbmesh))

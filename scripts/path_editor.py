@@ -74,6 +74,15 @@ HTML = """<!DOCTYPE html>
     <label>Base (mm)<input type="number" id="baseMm" value="10" min="3" max="30" step="0.5"></label>
     <label>Height ×<input type="number" id="exagX" value="5" min="0.2" max="20" step="0.1"></label>
   </div>
+  <div class="row">
+    <label>Start holes<select id="optStart"><option>2</option><option>3</option></select></label>
+    <label>End mark<select id="optEnd">
+      <option value="double">double line</option>
+      <option value="end">'END'</option>
+      <option value="none">none</option></select></label>
+  </div>
+  <label style="display:flex;align-items:center;gap:6px">
+    <input type="checkbox" id="optStorage" style="width:auto"> Peg storage block</label>
   <label>New place name
     <input type="text" id="newLabel" placeholder="e.g. Zermatt" style="width:100%"></label>
   <button id="addLabel">Add label at view center</button>
@@ -322,6 +331,9 @@ cv.addEventListener('contextmenu', e=>e.preventDefault());
 function payload(){ return JSON.stringify({
   mode: mode=='wp' ? 'waypoints' : 'drawn', waypoints: wps, crop: crop,
   label_overrides: labOverrides, custom_labels: customLabels,
+  options: { start_holes: parseInt(document.getElementById('optStart').value)||2,
+             end_marker: document.getElementById('optEnd').value,
+             peg_storage: document.getElementById('optStorage').checked },
   min_radius_mm: parseFloat(document.getElementById('radius').value)||8 }); }
 async function loadLabels(){ try{
   const r=await fetch('/labels'); const d=await r.json();
@@ -375,6 +387,10 @@ async function load(){ const r=await fetch('/waypoints'); const d=await r.json()
   wps=d.waypoints||[]; strokes=[]; crop=d.crop||null;
   labOverrides=d.label_overrides||{};
   customLabels=d.custom_labels||[];
+  const op=d.options||{};
+  document.getElementById('optStart').value=op.start_holes||2;
+  document.getElementById('optEnd').value=op.end_marker||'double';
+  document.getElementById('optStorage').checked=!!op.peg_storage;
   if(d.min_radius_mm) document.getElementById('radius').value=d.min_radius_mm;
   setMode(d.mode=='drawn'?'draw':'wp'); loadLabels(); }
 document.getElementById('modeDraw').onclick=()=>setMode('draw');

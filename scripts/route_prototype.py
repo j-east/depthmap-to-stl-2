@@ -63,12 +63,18 @@ if os.path.exists(WAYPOINTS_FILE):
     CROP = _wj.get("crop")
     LABEL_OVERRIDES = _wj.get("label_overrides", {})
     CUSTOM_LABELS = _wj.get("custom_labels", [])
+    OPTIONS = _wj.get("options", {})
     print(f"{PATH_MODE} mode, {len(WAYPOINTS)} points, min radius {MIN_RADIUS_MM} mm, "
           f"crop {CROP}, {len(LABEL_OVERRIDES)} label overrides")
 else:
     WAYPOINTS = []
     CUSTOM_LABELS = []
-print(f"region: {ACTIVE}")
+    OPTIONS = {}
+START_HOLES = int(OPTIONS.get("start_holes", 2))
+END_MARKER = OPTIONS.get("end_marker", "double")
+PEG_STORAGE = bool(OPTIONS.get("peg_storage", False))
+print(f"region: {ACTIVE} | start holes {START_HOLES}, end '{END_MARKER}', "
+      f"storage {'on' if PEG_STORAGE else 'off'}")
 
 def render_base():
     """Hillshade + bathymetry + coastline + landmarks; also saves data/basemap.png."""
@@ -186,7 +192,8 @@ if len(WAYPOINTS) < 2:
     dr.rectangle([cx0, cy0, cx1, cy1], outline=(255, 255, 255), width=6)
     pim.resize((W // 2, H // 2), Image.LANCZOS).save("data/route_prototype.png")
     raise SystemExit(f"region '{ACTIVE}': no course yet — draw one and Save & Re-route")
-CROP_MARG_PX = 2.5 / MM_PER_PX    # holes must sit this far inside the board edge
+CROP_MARG_PX = 4.5 / MM_PER_PX    # hole sites this far inside the board edge,
+                                  # so milestone rings/collars can't overhang
 
 # ---- routing on downsampled grid ----
 wd = water[::DOWN, ::DOWN]
@@ -259,6 +266,17 @@ rx, ry = np.interp(u, s, fx), np.interp(u, s, fy)
 
 # enforce the minimum bend radius, then re-resample evenly
 rx, ry = enforce_min_radius(rx, ry, MIN_RADIUS_MM / MM_PER_PX)
+
+# trim course ends that run off the board (lanes/rings would be clipped
+# mid-shape at the wall otherwise)
+_m = 3.0 / MM_PER_PX
+_in = ((rx >= cx0 + _m) & (rx <= cx1 - _m) & (ry >= cy0 + _m) & (ry <= cy1 - _m))
+if _in.any() and not _in.all():
+    i0, i1 = np.argmax(_in), len(_in) - 1 - np.argmax(_in[::-1])
+    if i1 - i0 < len(rx) - 1:
+        print(f"trimmed {i0 + (len(rx)-1-i1)} of {len(rx)} course points outside the board")
+        rx, ry = rx[i0:i1 + 1], ry[i0:i1 + 1]
+
 d = np.hypot(np.diff(rx), np.diff(ry)); s = np.concatenate([[0], np.cumsum(d)])
 total = s[-1]; print(f"route length {total:.0f} px = {total*M_SRC/1000:.1f} km real "
                      f"= {total*MM_PER_PX:.0f} mm on board")
@@ -414,8 +432,8 @@ icf = min(np.searchsorted(u, centers[-1]), len(u) - 1)
 # their neighboring group (or each other)
 g0 = np.array(group_pts(ic0, hole_step))
 for extra in np.arange(0.0, 3.1, 0.5):
-    offs = [-cluster_len / 2 - hole_step * (2.5 + extra),
-            -cluster_len / 2 - hole_step * (1.5 + extra)]
+    offs = [-cluster_len / 2 - hole_step * (k + 1.5 + extra)
+            for k in reversed(range(START_HOLES))]
     spts = [lane_pt(k, ic0, o) for k in range(3) for o in offs]
     if pdist(np.vstack([spts, g0])).min() >= HOLE_MIN_PX:
         break
@@ -428,14 +446,14 @@ for fextra in np.arange(0.0, 3.1, 0.5):
         break
 
 for k in range(3):
-    for o in offs:                                     # 2 start holes
+    for o in offs:                                     # start holes
         holes[k].append(lane_pt(k, ic0, o))
     for c in centers:                                  # 24 groups of 5
         ic = min(np.searchsorted(u, c), len(u) - 1)
         for m in range(5):
             holes[k].append(lane_pt(k, ic, (m - 2) * hole_step))
     holes[k].append(lane_pt(k, icf, foff))             # finish hole
-print("holes per lane:", len(holes[0]), "(2 start + 120 + finish)")
+print(f"holes per lane: {len(holes[0])} ({START_HOLES} start + 120 + finish)")
 
 # verify no two holes anywhere on the board collide
 allh = np.array([p for hl in holes for p in hl])
@@ -554,6 +572,22 @@ arrow = {"pts": [[float(_px + _dx * AL * 0.6), float(_py + _dy * AL * 0.6)],
                  [float(_px - _dx * AL * 0.4 + _nx * AW / 2), float(_py - _dy * AL * 0.4 + _ny * AW / 2)],
                  [float(_px - _dx * AL * 0.4 - _nx * AW / 2), float(_py - _dy * AL * 0.4 - _ny * AW / 2)]]}
 
+# end-of-course marker (option): double finish line, 'END' text, or nothing
+end_marker = {"type": END_MARKER}
+if END_MARKER == "double":
+    lines = []
+    for dmm in (1.4, 3.4):
+        s_e = min(u[icf] + foff + hole_step * 0.9 + dmm / MM_PER_PX, u[-1])
+        ie = min(np.searchsorted(u, s_e), len(u) - 1)
+        hw_e = LANE_OFFSET_PX * squeeze[ie] + 2.2 / MM_PER_PX
+        lines.append([[float(rx[ie] + nx[ie] * hw_e), float(ry[ie] + ny[ie] * hw_e)],
+                      [float(rx[ie] - nx[ie] * hw_e), float(ry[ie] - ny[ie] * hw_e)]])
+    end_marker["lines"] = lines
+elif END_MARKER == "end":
+    x_, y_, s_, _ = label_pos(icf, foff + hole_step * 2.5 + 6.0 / MM_PER_PX,
+                              "END", mults=(1.0, 1.2, 1.45))
+    labels.append({"text": "END", "x": x_, "y": y_, "angle": 0.0, "size": s_})
+
 # all count labels share one size: the largest at which every one of the 24
 # finds a clean home (crowded boards step the whole set down together)
 for uni in (LABEL_MM, 8.4, 7.4, 6.6):
@@ -574,8 +608,39 @@ labels.extend(nlabels)
 # user-added place names from the editor: position and text are law
 for cl in CUSTOM_LABELS:
     x_, y_ = lonlat_to_px(cl["lon"], cl["lat"])
+    _sz = float(cl.get("size", 6.5))
     labels.append({"text": cl["text"], "x": float(x_), "y": float(y_),
-                   "angle": 0.0, "size": float(cl.get("size", 6.5)), "custom": True})
+                   "angle": 0.0, "size": _sz, "custom": True})
+    placed_rects.append((float(x_), float(y_),
+                         len(cl["text"]) * _sz * 0.36 / MM_PER_PX, _sz * 0.62 / MM_PER_PX))
+
+# peg storage block (option): a parking pad with a 3x3 grid of holes,
+# auto-placed in clear space near the starting block
+storage, storage_holes = None, []
+if PEG_STORAGE:
+    pitch_s = 4.6 / MM_PER_PX
+    hw_s = pitch_s + 3.0 / MM_PER_PX
+    _isb = min(np.searchsorted(u, max(u[ic0] + (offs[0] + offs[-1]) / 2, 0)), len(u) - 1)
+    bx, by = rx[_isb], ry[_isb]
+    done = False
+    for rad_mm in (16, 20, 24, 28, 33, 38, 44):
+        for angd in range(0, 360, 30):
+            x = bx + math.cos(math.radians(angd)) * rad_mm / MM_PER_PX
+            y = by + math.sin(math.radians(angd)) * rad_mm / MM_PER_PX
+            x = min(max(x, cx0 + hw_s + 30), cx1 - hw_s - 30)
+            y = min(max(y, cy0 + hw_s + 30), cy1 - hw_s - 30)
+            if rect_penalty(x, y, hw_s, hw_s) == 0:
+                done = True; break
+        if done:
+            break
+    if done:
+        storage = {"x": float(x), "y": float(y), "hw": float(hw_s), "hh": float(hw_s)}
+        for r_ in (-1, 0, 1):
+            for c_ in (-1, 0, 1):
+                storage_holes.append([float(x + c_ * pitch_s), float(y + r_ * pitch_s)])
+        placed_rects.append((x, y, hw_s, hw_s))
+    else:
+        print("WARNING: no clear spot for the peg storage block")
 
 # ---- small capsule across the track around each MILESTONE row: the three
 # holes (one per lane) at every 5th position, which the count label names ----
@@ -588,7 +653,7 @@ for c in centers:
 
 # starting block: a FILLED colored pad under both 2x3 start rows
 ia = min(np.searchsorted(u, max(u[ic0] + offs[0], 0)), len(u) - 1)
-ib = min(np.searchsorted(u, max(u[ic0] + offs[1], 0)), len(u) - 1)
+ib = min(np.searchsorted(u, max(u[ic0] + offs[-1], 0)), len(u) - 1)
 start_block = {"pts": [[float(rx[ia]), float(ry[ia])], [float(rx[ib]), float(ry[ib])]],
                "half_w": float(LANE_OFFSET_PX * squeeze[ic0] + 2.5 / MM_PER_PX)}
 
@@ -597,7 +662,8 @@ json.dump({"lanes": [[list(map(float, l[0])), list(map(float, l[1]))] for l in l
            "bbox": [MINLON, MINLAT, MAXLON, MAXLAT], "grid": [W, H],
            "mm_per_px": MM_PER_PX, "crop_px": [cx0, cy0, cx1, cy1],
            "labels": labels, "group_rings": group_rings, "start_block": start_block,
-           "arrow": arrow,
+           "arrow": arrow, "end_marker": end_marker,
+           "storage": storage, "storage_holes": storage_holes,
            "datum_m": DATUM_M, "src_file": SRC, "region": ACTIVE,
            "exag": EXAG_R, "src_m_per_px": M_SRC,
            "spec": {"lane_sp_mm": LANE_SP_MM, "hole_step_mm": hole_step * MM_PER_PX,
@@ -618,6 +684,19 @@ for p in (_sp[0], _sp[-1]):
     _sd.ellipse([p[0] - _w / 2, p[1] - _w / 2, p[0] + _w / 2, p[1] + _w / 2], fill=255)
 pim.paste((96, 178, 110), mask=_sb)
 draw.polygon([tuple(p) for p in arrow["pts"]], fill=(255, 255, 255), outline=(0, 0, 0))
+for p1, p2 in end_marker.get("lines", []):
+    draw.line([tuple(p1), tuple(p2)], fill=(255, 255, 255), width=max(2, int(1.0 / MM_PER_PX)))
+if storage:
+    _st = Image.new("L", pim.size, 0)
+    ImageDraw.Draw(_st).rounded_rectangle(
+        [storage["x"] - storage["hw"], storage["y"] - storage["hh"],
+         storage["x"] + storage["hw"], storage["y"] + storage["hh"]],
+        radius=int(2.5 / MM_PER_PX), fill=255)
+    pim.paste((96, 178, 110), mask=_st)
+    _hr = 1.6 / MM_PER_PX
+    for hx, hy in storage_holes:
+        draw.ellipse([hx - _hr, hy - _hr, hx + _hr, hy + _hr],
+                     fill=(20, 20, 20), outline=(90, 90, 90), width=3)
 
 # draw at true physical scale: 1 mm lines, 3.2 mm peg holes
 LINE_W = max(2, int(1.0 / MM_PER_PX))
@@ -658,7 +737,14 @@ if os.path.exists(f"data/features_{ACTIVE}.json"):
     feats = json.load(open(f"data/features_{ACTIVE}.json"))
     for rv in feats.get("rivers", []):
         rpts = [lonlat_to_px(lon, lat) for lon, lat in rv["pts"]]
-        draw.line(rpts, fill=(80, 150, 215), width=max(2, int(0.7 / MM_PER_PX)), joint="curve")
+        in_mm, prev = 0.0, None
+        for x, y in rpts:
+            inside = cx0 <= x <= cx1 and cy0 <= y <= cy1
+            if inside and prev:
+                in_mm += math.hypot(x - prev[0], y - prev[1]) * MM_PER_PX
+            prev = (x, y) if inside else None
+        if in_mm >= 10.0:  # skip clipped crumbs at the board edge
+            draw.line(rpts, fill=(80, 150, 215), width=max(2, int(0.7 / MM_PER_PX)), joint="curve")
     def _f(size_mm):
         try:
             from PIL import ImageFont as _IF
