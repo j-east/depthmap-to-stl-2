@@ -1,5 +1,5 @@
 {
- "active": "dufourspitze",
+ "active": "merion-east",
  "regions": {
   "deer-isle": {
    "bbox": [
@@ -82,7 +82,29 @@
     ]
    ],
    "snowline_m": 2900,
-   "base_mm": 10.0
+   "base_mm": 3.0
+  },
+  "merion-east": {
+   "bbox": [
+    -75.322,
+    39.992,
+    -75.306,
+    40.009
+   ],
+   "source": "usgs",
+   "src_file": "data/dem_merion-east.tif",
+   "src_m_per_px": 0.631,
+   "datum_m": 81.0,
+   "exag": 8.0,
+   "base_mm": 8.0,
+   "kind": "golf",
+   "landmarks": [
+    [
+     -75.3141,
+     40.0003,
+     "Merion East clubhouse"
+    ]
+   ]
   }
  }
 }
