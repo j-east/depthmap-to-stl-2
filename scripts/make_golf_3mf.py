@@ -50,7 +50,7 @@ TURF = [
 ]
 PATHS = [("cartpath", (224, 214, 188), 0.45, 0.9),   # (name, color, proud, width mm)
          ("road",     (96, 96, 100), 0.5, 1.6),
-         ("rail",     (74, 66, 62), 0.6, 1.4)]        # railroad: dark, slightly taller
+         ("rail",     (132, 86, 60), 0.6, 1.4)]       # railroad: warm brown, distinct from road
 ROUGH = (78, 120, 66)
 
 

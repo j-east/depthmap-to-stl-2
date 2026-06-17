@@ -52,6 +52,17 @@ for layer in ORDER:
         if len(pts) >= 3:
             draw.polygon(pts, fill=COLORS[layer] + (255,))
 
+# paths, roads, railway
+PATHCOL = {"cartpath": (224, 214, 188, 255), "road": (96, 96, 100, 255),
+           "footway": (210, 196, 170, 200), "rail": (132, 86, 60, 255)}
+PATHW = {"cartpath": 0.9, "road": 1.6, "footway": 0.7, "rail": 1.5}
+for name, items in g.get("paths", {}).items():
+    wpx = max(1, int(PATHW.get(name, 1.0) / M_SRC / (255 / H)))
+    for p in items:
+        pts = [to_px(lon, lat) for lon, lat in p["pts"]]
+        if len(pts) >= 2:
+            draw.line(pts, fill=PATHCOL.get(name, (120, 120, 120, 255)), width=wpx)
+
 # routing lines (thin) + hole numbers
 try:
     font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", max(20, W // 70))
