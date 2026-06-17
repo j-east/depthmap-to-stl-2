@@ -29,6 +29,7 @@ q = (f'[out:json][timeout:80];'
      f'('
      f'way["golf"]({MINLAT},{MINLON},{MAXLAT},{MAXLON});'
      f'way["highway"]({MINLAT},{MINLON},{MAXLAT},{MAXLON});'
+     f'way["railway"]({MINLAT},{MINLON},{MAXLAT},{MAXLON});'
      f');'
      f'out tags geom 2500;')
 
@@ -39,8 +40,9 @@ LAYER = {
     "water_hazard": "water", "lateral_water_hazard": "water",
 }
 feats = {k: [] for k in ("rough", "fairway", "tee", "green", "bunker", "water")}
-paths = {"cartpath": [], "road": [], "footway": []}
+paths = {"cartpath": [], "road": [], "footway": [], "rail": []}
 holes = []
+RAIL = {"rail", "light_rail", "subway", "tram", "narrow_gauge", "preserved"}
 
 ROADS = {"motorway", "trunk", "primary", "secondary", "tertiary", "unclassified",
          "residential", "living_street", "service", "road"}
@@ -49,10 +51,13 @@ for e in overpass(q).get("elements", []):
     t = e.get("tags", {})
     g = t.get("golf")
     hw = t.get("highway")
+    rw = t.get("railway")
     geom = [[p["lon"], p["lat"]] for p in e.get("geometry", [])]
     if len(geom) < 2:
         continue
-    if g == "hole":
+    if rw in RAIL:
+        paths["rail"].append({"pts": geom})
+    elif g == "hole":
         ref = t.get("ref", "")
         holes.append({"ref": int(ref) if ref.isdigit() else None,
                       "par": t.get("par"), "pts": geom})
