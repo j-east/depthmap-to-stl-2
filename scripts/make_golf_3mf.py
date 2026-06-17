@@ -130,13 +130,8 @@ def surf_grid(pitch):
     return ny, nx, zt
 
 
-# base slab (rough)
+# fine surface, needed before carving the base for water
 nyb, nxb, ztb = surf_grid(PITCH_B)
-V_base, F_base = block_mesh(np.ones((nyb, nxb), bool), ztb, np.zeros_like(ztb), PITCH_B)
-objects = [("rough", "#4E7842", V_base, F_base)]
-print(f"rough: {len(F_base):,} tris")
-
-# decal layers on the fine surface
 _, _, ztf = surf_grid(PITCH_F)
 
 def decal(mask, proud):
@@ -144,17 +139,44 @@ def decal(mask, proud):
         return None
     return block_mesh(mask, ztf + proud, ztf - 0.15, PITCH_F)
 
-emitted = {1: False}
+# ---- water: a flat, level pond recessed into a carved basin (real water is
+# level, not draped on the hillside like the turf decals) ----
+WATER_IDX = 3
+wmask_f = turf_lbl == WATER_IDX
+water_mesh = None
+if wmask_f.any():
+    wz = float(np.percentile(ztf[:-1, :-1][wmask_f], 25))  # level near the low edge
+    wtop = np.full_like(ztf, wz)
+    water_mesh = block_mesh(wmask_f, wtop, np.full_like(ztf, wz - 1.2), PITCH_F)
+    # carve the rough so terrain doesn't poke through the flat pond
+    cb = Image.new("1", (nxb + 1, nyb + 1), 0)
+    cd = ImageDraw.Draw(cb)
+    for f in g["features"].get("water", []):
+        pts = [( (lo - MINLON) / (MAXLON - MINLON) * BW / PITCH_B,
+                 (BH - (la - MINLAT) / (MAXLAT - MINLAT) * BH) / PITCH_B) for lo, la in f["pts"]]
+        if len(pts) >= 3:
+            cd.polygon(pts, fill=1)
+    carve = np.array(cb, bool)
+    ztb[carve] = np.minimum(ztb[carve], wz - 0.25)
+
+# base slab (rough), built after the basin is carved
+V_base, F_base = block_mesh(np.ones((nyb, nxb), bool), ztb, np.zeros_like(ztb), PITCH_B)
+objects = [("rough", "#4E7842", V_base, F_base)]
+print(f"rough: {len(F_base):,} tris")
+
+# turf decals (water handled separately above)
 for i, (name, color, proud) in enumerate(TURF):
-    idx = 1 if name == "tee" else i + 1
-    if name == "tee":
-        continue  # merged into fairway by index
-    m = turf_lbl == idx
-    mesh = decal(m, proud)
+    if name in ("tee", "water"):
+        continue  # tee merged into fairway idx 1; water is the flat pond
+    idx = i + 1
+    mesh = decal(turf_lbl == idx, proud)
     if mesh:
-        hexc = "#%02X%02X%02X" % color
-        objects.append((name, hexc, *mesh))
+        objects.append((name, "#%02X%02X%02X" % color, *mesh))
         print(f"{name}: {len(mesh[1]):,} tris")
+if water_mesh:
+    objects.append(("water", "#%02X%02X%02X" % dict(((n, c) for n, c, _ in TURF))["water"],
+                    *water_mesh))
+    print(f"water: {len(water_mesh[1]):,} tris (flat pond at z {wz:.1f})")
 
 for name, color, proud, wmm in PATHS:
     mesh = decal(path_mask(name, wmm), proud)
