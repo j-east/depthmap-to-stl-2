@@ -89,6 +89,23 @@ HTML = """<!DOCTYPE html>
   <button id="fetchNames">🗺 Auto-add place names</button>
   <label>Selected label size (mm) — or scroll over a label
     <input type="number" id="labSize" value="9.6" min="3" max="16" step="0.5"></label>
+  <div id="alignPanel" style="display:none;border:1px solid #3a3a52;border-radius:7px;padding:8px;margin:8px 0">
+    <b style="font-size:12px">Align features to terrain</b>
+    <p style="margin:4px 0">Nudge the course vectors onto the topography (rail
+       embankment, brook channel, green pads). Each click re-renders.</p>
+    <div class="row"><label>step (m)<input type="number" id="alStep" value="3" min="0.5" max="30" step="0.5"></label></div>
+    <div class="row"><button id="alNW">↖</button><button id="alN">↑</button><button id="alNE">↗</button></div>
+    <div class="row"><button id="alW">←</button><button id="alReset">⟳ reset</button><button id="alE">→</button></div>
+    <div class="row"><button id="alSW">↙</button><button id="alS">↓</button><button id="alSE">↘</button></div>
+    <div class="row">
+      <label>lon stretch ×<input type="number" id="alSX" value="1" min="0.8" max="1.2" step="0.002"></label>
+      <label>lat stretch ×<input type="number" id="alSY" value="1" min="0.8" max="1.2" step="0.002"></label>
+    </div>
+    <div class="row">
+      <label>rotate°<input type="number" id="alRot" value="0" min="-10" max="10" step="0.25"></label>
+      <button id="alSXdn">lon −</button><button id="alSXup">lon +</button>
+    </div>
+  </div>
   <button class="primary" id="route">Save &amp; Re-route</button>
   <button class="primary" id="build" style="background:#16a34a">🖨 Build &amp; open in Bambu Studio</button>
   <button id="save">Save only</button>
@@ -366,7 +383,39 @@ async function loadRegions(){
   [MINLON,MINLAT,MAXLON,MAXLAT]=d.bbox;
   if(d.base_mm!=null) document.getElementById('baseMm').value=d.base_mm;
   if(d.exag!=null) document.getElementById('exagX').value=d.exag;
+  window.regionKind=d.kind||'cribbage';
+  document.getElementById('alignPanel').style.display = window.regionKind=='golf' ? 'block' : 'none';
+  const ft=d.feature_transform||{};
+  align={dx_m:ft.dx_m||0, dy_m:ft.dy_m||0,
+         scale_x:ft.scale_x||ft.scale||1, scale_y:ft.scale_y||ft.scale||1, rot_deg:ft.rot_deg||0};
+  document.getElementById('alSX').value=align.scale_x;
+  document.getElementById('alSY').value=align.scale_y;
+  document.getElementById('alRot').value=align.rot_deg;
 }
+let align={dx_m:0,dy_m:0,scale_x:1,scale_y:1,rot_deg:0};
+async function applyAlign(){
+  status.textContent='aligning… re-rendering';
+  const r=await fetch('/align',{method:'POST',body:JSON.stringify(align)});
+  const out=await r.json();
+  status.textContent=out.ok ? ('dx '+align.dx_m.toFixed(1)+'m dy '+align.dy_m.toFixed(1)
+    +'m  lon×'+align.scale_x.toFixed(3)+' lat×'+align.scale_y.toFixed(3)+' rot '+align.rot_deg+'°')
+    : 'FAILED:\\n'+out.log;
+  showingBase=false; img.src='/map.png?'+Date.now(); }
+function alNudge(ax,ay){ const s=parseFloat(document.getElementById('alStep').value)||3;
+  align.dx_m+=ax*s; align.dy_m+=ay*s; applyAlign(); }
+for(const [id,ax,ay] of [['alN',0,1],['alS',0,-1],['alE',1,0],['alW',-1,0],
+    ['alNE',1,1],['alNW',-1,1],['alSE',1,-1],['alSW',-1,-1]])
+  document.getElementById(id).onclick=()=>alNudge(ax,ay);
+document.getElementById('alReset').onclick=()=>{ align={dx_m:0,dy_m:0,scale_x:1,scale_y:1,rot_deg:0};
+  document.getElementById('alSX').value=1; document.getElementById('alSY').value=1;
+  document.getElementById('alRot').value=0; applyAlign(); };
+document.getElementById('alSX').onchange=e=>{ align.scale_x=parseFloat(e.target.value)||1; applyAlign(); };
+document.getElementById('alSY').onchange=e=>{ align.scale_y=parseFloat(e.target.value)||1; applyAlign(); };
+document.getElementById('alRot').onchange=e=>{ align.rot_deg=parseFloat(e.target.value)||0; applyAlign(); };
+document.getElementById('alSXup').onclick=()=>{ align.scale_x=+(align.scale_x+0.005).toFixed(3);
+  document.getElementById('alSX').value=align.scale_x; applyAlign(); };
+document.getElementById('alSXdn').onclick=()=>{ align.scale_x=+(align.scale_x-0.005).toFixed(3);
+  document.getElementById('alSX').value=align.scale_x; applyAlign(); };
 async function saveRegionParams(){
   const b=parseFloat(document.getElementById('baseMm').value),
         x=parseFloat(document.getElementById('exagX').value);
@@ -452,6 +501,19 @@ def _active():
 def _wp_path():
     return os.path.join(ROOT, f"data/waypoints_{_active()}.json")
 
+def _kind():
+    try:
+        cfg = _regions_cfg()
+        return cfg["regions"][cfg["active"]].get("kind", "cribbage")
+    except Exception:
+        return "cribbage"
+
+def _render_script():
+    return "scripts/preview_golf.py" if _kind() == "golf" else "scripts/route_prototype.py"
+
+def _build_script():
+    return "scripts/make_golf_3mf.py" if _kind() == "golf" else "scripts/make_board_3mf.py"
+
 
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
@@ -488,6 +550,9 @@ class H(BaseHTTPRequestHandler):
             self._send(200, json.dumps({"active": act,
                                         "names": sorted(cfg["regions"].keys()),
                                         "bbox": reg["bbox"],
+                                        "kind": reg.get("kind", "cribbage"),
+                                        "feature_transform": reg.get("feature_transform",
+                                            {"dx_m": 0, "dy_m": 0, "scale_x": 1.0, "scale_y": 1.0, "rot_deg": 0}),
                                         "base_mm": reg.get("base_mm", 10.0),
                                         "exag": reg.get("exag", 5.0)}))
         elif self.path == "/labels":
@@ -527,26 +592,46 @@ class H(BaseHTTPRequestHandler):
             self._send(200, '{"ok":true}')
         elif self.path == "/build":
             act = _active()
-            try:
-                rl = json.load(open(os.path.join(ROOT, "data/route_lanes.json")))
-                if rl.get("region") != act:
-                    self._send(200, json.dumps({"ok": False,
-                        "log": f"layout is for '{rl.get('region')}' — Save & Re-route first"}))
+            if _kind() != "golf":
+                try:
+                    rl = json.load(open(os.path.join(ROOT, "data/route_lanes.json")))
+                    if rl.get("region") != act:
+                        self._send(200, json.dumps({"ok": False,
+                            "log": f"layout is for '{rl.get('region')}' — Save & Re-route first"}))
+                        return
+                except Exception:
+                    self._send(200, json.dumps({"ok": False, "log": "no layout yet — Save & Re-route first"}))
                     return
-            except Exception:
-                self._send(200, json.dumps({"ok": False, "log": "no layout yet — Save & Re-route first"}))
-                return
             if not run_lock.acquire(blocking=False):
                 self._send(409, json.dumps({"ok": False, "log": "a run is already in progress"}))
                 return
             try:
-                r = subprocess.run(["python3", "scripts/make_board_3mf.py"], cwd=ROOT,
+                env = dict(os.environ, PYTHONPATH=".pydeps")
+                r = subprocess.run(["python3", _build_script()], cwd=ROOT, env=env,
                                    capture_output=True, text=True, timeout=900)
                 log = "\n".join((r.stdout + r.stderr).strip().splitlines()[-6:])
                 ok = r.returncode == 0
                 if ok:
                     subprocess.run(["open", os.path.join(ROOT, f"data/board_{act}.3mf")])
                 self._send(200, json.dumps({"ok": ok, "log": log}))
+            finally:
+                run_lock.release()
+        elif self.path == "/align":
+            cfg = _regions_cfg()
+            reg = cfg["regions"][cfg["active"]]
+            reg["feature_transform"] = {
+                "dx_m": float(body.get("dx_m", 0.0)), "dy_m": float(body.get("dy_m", 0.0)),
+                "scale_x": float(body.get("scale_x", 1.0)), "scale_y": float(body.get("scale_y", 1.0)),
+                "rot_deg": float(body.get("rot_deg", 0.0))}
+            json.dump(cfg, open(os.path.join(ROOT, "data/regions.json"), "w"), indent=1)
+            if not run_lock.acquire(blocking=False):
+                self._send(409, json.dumps({"ok": False, "log": "a run is in progress"}))
+                return
+            try:
+                r = subprocess.run(["python3", "scripts/preview_golf.py"], cwd=ROOT,
+                                   capture_output=True, text=True, timeout=300)
+                self._send(200, json.dumps({"ok": r.returncode == 0,
+                    "log": "\n".join((r.stdout + r.stderr).strip().splitlines()[-3:])}))
             finally:
                 run_lock.release()
         elif self.path == "/region_params":
@@ -582,7 +667,8 @@ class H(BaseHTTPRequestHandler):
                                             "bbox": cfg["regions"][name]["bbox"]}))
                 return
             try:
-                r = subprocess.run(["python3", "scripts/route_prototype.py"], cwd=ROOT,
+                env = dict(os.environ, PYTHONPATH=".pydeps")
+                r = subprocess.run(["python3", _render_script()], cwd=ROOT, env=env,
                                    capture_output=True, text=True, timeout=900)
                 log = "\n".join((r.stdout + r.stderr).strip().splitlines()[-6:])
                 self._send(200, json.dumps({"ok": True, "log": log,
@@ -595,7 +681,8 @@ class H(BaseHTTPRequestHandler):
                 return
             try:
                 json.dump(body, open(path, "w"), indent=1)
-                r = subprocess.run(["python3", "scripts/route_prototype.py"], cwd=ROOT,
+                env = dict(os.environ, PYTHONPATH=".pydeps")
+                r = subprocess.run(["python3", _render_script()], cwd=ROOT, env=env,
                                    capture_output=True, text=True, timeout=900)
                 log = "\n".join((r.stdout + r.stderr).strip().splitlines()[-8:])
                 self._send(200, json.dumps({"ok": r.returncode == 0, "log": log}))

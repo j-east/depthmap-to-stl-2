@@ -104,7 +104,14 @@
      40.0003,
      "Merion East clubhouse"
     ]
-   ]
+   ],
+   "feature_transform": {
+    "dx_m": 0.0,
+    "dy_m": -3.0,
+    "scale_x": 1.0,
+    "scale_y": 0.775,
+    "rot_deg": 0.0
+   }
   }
  }
 }

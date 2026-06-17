@@ -14,7 +14,8 @@ ACTIVE = cfg["active"]
 reg = cfg["regions"][ACTIVE]
 MINLON, MINLAT, MAXLON, MAXLAT = reg["bbox"]
 M_SRC = reg["src_m_per_px"]
-g = json.load(open(f"data/golf_{ACTIVE}.json"))
+from golf_common import transform_golf
+g = transform_golf(json.load(open(f"data/golf_{ACTIVE}.json")), reg)
 
 a = np.array(Image.open(reg["src_file"]), dtype=np.float64)
 a = np.where(a < -1e30, np.nan, a)
@@ -46,11 +47,14 @@ def to_px(lon, lat):
     return ((lon - MINLON) / (MAXLON - MINLON) * W,
             (MAXLAT - lat) / (MAXLAT - MINLAT) * H)
 
+# semi-transparent turf so the hillshade (rail embankment, brook channel,
+# leveled green pads) reads through it for alignment
+TURF_A = 205
 for layer in ORDER:
     for f in g["features"].get(layer, []):
         pts = [to_px(lon, lat) for lon, lat in f["pts"]]
         if len(pts) >= 3:
-            draw.polygon(pts, fill=COLORS[layer] + (255,))
+            draw.polygon(pts, fill=COLORS[layer] + (TURF_A,))
 
 # paths, roads, railway
 PATHCOL = {"cartpath": (224, 214, 188, 255), "road": (96, 96, 100, 255),
