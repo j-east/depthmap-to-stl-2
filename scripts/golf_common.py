@@ -8,17 +8,25 @@ from PIL import Image, ImageDraw
 from scipy import ndimage
 
 
-def hole_outline_mask(holes, turf_polys, to_px, ny, nx, corridor_half_px, stroke_px):
-    """Boolean outline of each hole's footprint = union of its tee/fairway/green
-    polygons + a minimum-width corridor along the tee->green routing (so the
-    pieces connect). Returns the perimeter band of every hole's footprint."""
-    tmasks = []
-    for f in turf_polys:
+def _rasterize(polys, to_px, ny, nx):
+    out = []
+    for f in polys:
         pts = [to_px(p[0], p[1]) for p in f["pts"]]
         if len(pts) >= 3:
             im = Image.new("1", (nx, ny), 0)
             ImageDraw.Draw(im).polygon(pts, fill=1)
-            tmasks.append(np.array(im, bool))
+            out.append(np.array(im, bool))
+    return out
+
+
+def hole_outline_mask(holes, turf_polys, to_px, ny, nx, corridor_half_px, stroke_px,
+                      exclude_polys=None):
+    """Boolean outline of each hole's footprint = union of its tee/fairway/green
+    polygons + a minimum-width corridor along the tee->green routing (so the
+    pieces connect). Returns the perimeter band of every hole's footprint.
+    Pixels under exclude_polys (bunkers/greens/tees/water) are cut so the
+    outline yields to those features instead of printing over them."""
+    tmasks = _rasterize(turf_polys, to_px, ny, nx)
     outline = np.zeros((ny, nx), bool)
     for h in holes:
         pts = [to_px(p[0], p[1]) for p in h["pts"]]
@@ -34,6 +42,12 @@ def hole_outline_mask(holes, turf_polys, to_px, ny, nx, corridor_half_px, stroke
         din = ndimage.distance_transform_edt(foot)
         dout = ndimage.distance_transform_edt(~foot)
         outline |= (foot & (din <= stroke_px)) | (~foot & (dout <= stroke_px))
+    if exclude_polys:
+        ex = np.zeros((ny, nx), bool)
+        for m in _rasterize(exclude_polys, to_px, ny, nx):
+            ex |= m
+        ex = ndimage.binary_dilation(ex, iterations=max(1, int(stroke_px * 0.5)))
+        outline &= ~ex                  # leave a small gap around features
     return outline
 
 

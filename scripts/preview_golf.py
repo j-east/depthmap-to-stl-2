@@ -59,7 +59,7 @@ for layer in ORDER:
 # paths, roads, railway
 PATHCOL = {"cartpath": (224, 214, 188, 255), "road": (96, 96, 100, 255),
            "footway": (210, 196, 170, 200), "rail": (132, 86, 60, 255)}
-PATHW = {"cartpath": 0.9, "road": 1.6, "footway": 0.7, "rail": 1.5}
+PATHW = {"cartpath": 0.9, "road": 1.0, "footway": 0.7, "rail": 1.5}
 for name, items in g.get("paths", {}).items():
     wpx = max(1, int(PATHW.get(name, 1.0) / M_SRC / (255 / H)))
     for p in items:
@@ -71,8 +71,11 @@ for name, items in g.get("paths", {}).items():
 mm_per_px = 255 / H
 turf_polys = (g["features"].get("tee", []) + g["features"].get("fairway", [])
               + g["features"].get("green", []))
+exclude = (g["features"].get("bunker", []) + g["features"].get("green", [])
+           + g["features"].get("tee", []) + g["features"].get("water", []))
 omask = hole_outline_mask(g["holes"], turf_polys, to_px, H, W,
-                          corridor_half_px=3.5 / mm_per_px, stroke_px=0.7 / mm_per_px)
+                          corridor_half_px=3.5 / mm_per_px, stroke_px=0.7 / mm_per_px,
+                          exclude_polys=exclude)
 pim.paste((58, 92, 50), mask=Image.fromarray((omask * 255).astype("uint8")))
 draw = ImageDraw.Draw(pim, "RGBA")
 try:

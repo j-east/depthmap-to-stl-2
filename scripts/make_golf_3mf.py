@@ -51,7 +51,7 @@ TURF = [
 ]
 OUTLINE_COLOR = (58, 92, 50)   # per-hole fairway outline; change freely
 PATHS = [("cartpath", (224, 214, 188), 0.45, 0.9),   # (name, color, proud, width mm)
-         ("road",     (96, 96, 100), 0.5, 1.6),
+         ("road",     (96, 96, 100), 0.5, 1.0),
          ("rail",     (132, 86, 60), 0.6, 1.4)]       # railroad: warm brown, distinct from road
 ROUGH = (78, 120, 66)
 
@@ -177,8 +177,11 @@ for i, (name, color, proud) in enumerate(TURF):
 # unioned with a min-width corridor), raised above the turf, recolorable
 turf_polys = (g["features"].get("tee", []) + g["features"].get("fairway", [])
               + g["features"].get("green", []))
+exclude = (g["features"].get("bunker", []) + g["features"].get("green", [])
+           + g["features"].get("tee", []) + g["features"].get("water", []))
 omask = hole_outline_mask(g["holes"], turf_polys, ll_fine, nyf, nxf,
-                          corridor_half_px=3.5 / PITCH_F, stroke_px=0.6 / PITCH_F)
+                          corridor_half_px=3.5 / PITCH_F, stroke_px=0.6 / PITCH_F,
+                          exclude_polys=exclude)
 omesh = decal(omask, 0.9)
 if omesh:
     objects.append(("hole_outline", "#%02X%02X%02X" % OUTLINE_COLOR, *omesh))

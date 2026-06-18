@@ -87,13 +87,13 @@
   "merion-east": {
    "bbox": [
     -75.32094563168457,
-    39.99275189108876,
+    39.99329,
     -75.30717556831543,
-    40.006740108911245
+    40.00587
    ],
    "source": "usgs",
    "src_file": "data/dem_merion-east.tif",
-   "src_m_per_px": 0.519,
+   "src_m_per_px": 0.467,
    "datum_m": 81.0,
    "exag": 4.0,
    "base_mm": 8.0,
