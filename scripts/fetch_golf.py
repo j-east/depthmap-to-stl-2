@@ -36,9 +36,9 @@ q = (f'[out:json][timeout:80];'
 # normalize the zoo of golf tags into a few paint layers
 LAYER = {
     "rough": "rough", "fairway": "fairway", "green": "green",
-    "tee": "tee", "bunker": "bunker", "driving_range": "fairway",
+    "tee": "tee", "bunker": "bunker",
     "water_hazard": "water", "lateral_water_hazard": "water",
-}
+}  # note: golf=driving_range intentionally excluded
 feats = {k: [] for k in ("rough", "fairway", "tee", "green", "bunker", "water")}
 paths = {"cartpath": [], "road": [], "footway": [], "rail": []}
 holes = []
