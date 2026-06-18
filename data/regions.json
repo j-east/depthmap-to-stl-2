@@ -107,9 +107,9 @@
    ],
    "feature_transform": {
     "dx_m": 0.0,
-    "dy_m": -3.0,
-    "scale_x": 1.0,
-    "scale_y": 0.775,
+    "dy_m": 0.0,
+    "scale_x": 0.775,
+    "scale_y": 1.0,
     "rot_deg": 0.0
    }
   }
