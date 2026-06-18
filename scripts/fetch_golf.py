@@ -42,7 +42,16 @@ LAYER = {
 feats = {k: [] for k in ("rough", "fairway", "tee", "green", "bunker", "water")}
 paths = {"cartpath": [], "road": [], "footway": [], "rail": []}
 holes = []
+dr_polys = []   # driving-range polygons, used only to drop the range's tee
 RAIL = {"rail", "light_rail", "subway", "tram", "narrow_gauge", "preserved"}
+
+def in_poly(pt, poly):
+    x, y = pt; inside = False; n = len(poly)
+    for i in range(n):
+        x0, y0 = poly[i]; x1, y1 = poly[(i + 1) % n]
+        if (y0 > y) != (y1 > y) and x < (x1 - x0) * (y - y0) / (y1 - y0 + 1e-12) + x0:
+            inside = not inside
+    return inside
 
 ROADS = {"motorway", "trunk", "primary", "secondary", "tertiary", "unclassified",
          "residential", "living_street", "service", "road"}
@@ -61,6 +70,8 @@ for e in overpass(q).get("elements", []):
         ref = t.get("ref", "")
         holes.append({"ref": int(ref) if ref.isdigit() else None,
                       "par": t.get("par"), "pts": geom})
+    elif g == "driving_range":
+        dr_polys.append(geom)
     elif g == "cartpath" or t.get("highway") == "cartpath":
         paths["cartpath"].append({"pts": geom})
     elif g in LAYER:
@@ -69,6 +80,26 @@ for e in overpass(q).get("elements", []):
         paths["road"].append({"pts": geom})
     elif hw in ("path", "footway", "track", "cycleway", "steps", "pedestrian"):
         paths["footway"].append({"pts": geom})
+
+# drop any tee in/at the driving range (range tees sit on the polygon edge,
+# so test the range's bounding box with a ~10 m margin, not just inside)
+if dr_polys:
+    import math as _m
+    mlon = 10 / (111320 * _m.cos(_m.radians((MINLAT + MAXLAT) / 2)))
+    mlat = 10 / 111320
+    boxes = []
+    for poly in dr_polys:
+        los = [p[0] for p in poly]; las = [p[1] for p in poly]
+        boxes.append((min(los) - mlon, min(las) - mlat, max(los) + mlon, max(las) + mlat))
+    before = len(feats["tee"])
+    kept = []
+    for tee in feats["tee"]:
+        cx = sum(p[0] for p in tee["pts"]) / len(tee["pts"])
+        cy = sum(p[1] for p in tee["pts"]) / len(tee["pts"])
+        if not any(x0 <= cx <= x1 and y0 <= cy <= y1 for x0, y0, x1, y1 in boxes):
+            kept.append(tee)
+    feats["tee"] = kept
+    print(f"dropped {before - len(kept)} driving-range tee(s)")
 
 out = f"data/golf_{ACTIVE}.json"
 json.dump({"features": feats, "paths": paths, "holes": holes,

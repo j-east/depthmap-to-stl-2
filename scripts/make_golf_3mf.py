@@ -49,7 +49,7 @@ TURF = [
     ("bunker",  (238, 222, 170), 0.6),
     ("green",   (198, 226, 128), 0.8),
 ]
-ROUTING_COLOR = (245, 245, 245)   # tee->green centerline; change freely
+OUTLINE_COLOR = (58, 92, 50)   # per-hole fairway outline; change freely
 PATHS = [("cartpath", (224, 214, 188), 0.45, 0.9),   # (name, color, proud, width mm)
          ("road",     (96, 96, 100), 0.5, 1.6),
          ("rail",     (132, 86, 60), 0.6, 1.4)]       # railroad: warm brown, distinct from road
@@ -173,21 +173,22 @@ for i, (name, color, proud) in enumerate(TURF):
         objects.append((name, "#%02X%02X%02X" % color, *mesh))
         print(f"{name}: {len(mesh[1]):,} tris")
 
-# tee->green routing centerlines: own object, raised above the turf
-def line_mask(polylines, width_mm):
+# per-hole outline: the perimeter of each fairway (the hole's playable shape),
+# raised just above the turf as its own recolorable object
+def outline_mask(polys, width_mm):
     im = Image.new("1", (nxf, nyf), 0)
     dr = ImageDraw.Draw(im)
     wpx = max(2, int(width_mm / PITCH_F))
-    for pl in polylines:
-        pts = [ll_fine(lo, la) for lo, la in pl]
-        if len(pts) >= 2:
-            dr.line(pts, fill=1, width=wpx, joint="curve")
+    for f in polys:
+        pts = [ll_fine(lo, la) for lo, la in f["pts"]]
+        if len(pts) >= 3:
+            dr.line(pts + [pts[0]], fill=1, width=wpx, joint="curve")
     return np.array(im, bool)
 
-rmesh = decal(line_mask([h["pts"] for h in g["holes"]], 1.1), 1.0)
-if rmesh:
-    objects.append(("routing", "#%02X%02X%02X" % ROUTING_COLOR, *rmesh))
-    print(f"routing: {len(rmesh[1]):,} tris")
+omesh = decal(outline_mask(g["features"].get("fairway", []), 1.0), 0.9)
+if omesh:
+    objects.append(("hole_outline", "#%02X%02X%02X" % OUTLINE_COLOR, *omesh))
+    print(f"hole_outline: {len(omesh[1]):,} tris")
 if water_mesh:
     objects.append(("water", "#%02X%02X%02X" % dict(((n, c) for n, c, _ in TURF))["water"],
                     *water_mesh))

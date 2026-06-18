@@ -67,19 +67,30 @@ for name, items in g.get("paths", {}).items():
         if len(pts) >= 2:
             draw.line(pts, fill=PATHCOL.get(name, (120, 120, 120, 255)), width=wpx)
 
-# routing lines (thin) + hole numbers
+# per-hole fairway outlines + hole numbers at hole center
+for f in g["features"].get("fairway", []):
+    pts = [to_px(lon, lat) for lon, lat in f["pts"]]
+    if len(pts) >= 3:
+        draw.line(pts + [pts[0]], fill=(58, 92, 50, 255), width=max(2, W // 650), joint="curve")
 try:
     font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", max(20, W // 70))
 except Exception:
     font = None
 for h in g["holes"]:
-    pts = [to_px(lon, lat) for lon, lat in h["pts"]]
-    if len(pts) >= 2:
-        draw.line(pts, fill=(245, 245, 245, 220), width=max(2, W // 700))
-    if h["ref"]:
-        mx, my = pts[len(pts) // 2]
-        draw.text((mx, my), str(h["ref"]), fill=(255, 255, 255), font=font,
-                  anchor="mm", stroke_width=3, stroke_fill=(20, 40, 20))
+    if not h["ref"]:
+        continue
+    pts = h["pts"]
+    d = [0.0]
+    for (a, b), (c, e) in zip(pts, pts[1:]):
+        d.append(d[-1] + math.hypot(c - a, e - b))
+    half = d[-1] / 2
+    mid = next((k for k in range(1, len(d)) if d[k] >= half), len(pts) // 2)
+    t = (half - d[mid - 1]) / (d[mid] - d[mid - 1] or 1)
+    lon = pts[mid - 1][0] + t * (pts[mid][0] - pts[mid - 1][0])
+    lat = pts[mid - 1][1] + t * (pts[mid][1] - pts[mid - 1][1])
+    mx, my = to_px(lon, lat)
+    draw.text((mx, my), str(h["ref"]), fill=(255, 255, 255), font=font,
+              anchor="mm", stroke_width=3, stroke_fill=(20, 40, 20))
 
 scale = 1500 / W
 out = pim.resize((int(W * scale), int(H * scale)), Image.LANCZOS)
