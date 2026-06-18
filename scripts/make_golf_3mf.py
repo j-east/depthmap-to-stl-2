@@ -188,19 +188,21 @@ for name, color, proud, wmm in PATHS:
         print(f"{name}: {len(mesh[1]):,} tris")
 
 # hole-number labels at each green end
+LABEL_MM = 11.0    # hole-number text height
 lbl_img = Image.new("1", (nxf, nyf), 0)
 try:
-    font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", int(5.5 / PITCH_F))
+    font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", int(LABEL_MM / PITCH_F))
 except Exception:
     font = ImageFont.load_default()
+sw, sh = int(2.0 * LABEL_MM / PITCH_F), int(1.6 * LABEL_MM / PITCH_F)
 for h in g["holes"]:
     if not h["ref"]:
         continue
     lo, la = h["pts"][-1]
     fx, fy = ll_fine(lo, la)
-    stamp = Image.new("1", (120, 90), 0)
-    ImageDraw.Draw(stamp).text((60, 45), str(h["ref"]), fill=1, font=font, anchor="mm")
-    lbl_img.paste(1, (int(fx - stamp.width / 2), int(fy - stamp.height / 2)), stamp)
+    stamp = Image.new("1", (sw, sh), 0)
+    ImageDraw.Draw(stamp).text((sw // 2, sh // 2), str(h["ref"]), fill=1, font=font, anchor="mm")
+    lbl_img.paste(1, (int(fx - sw / 2), int(fy - sh / 2)), stamp)
 lmesh = decal(np.array(lbl_img, bool), 1.0)
 if lmesh:
     objects.append(("labels", "#FFFFFF", *lmesh))
