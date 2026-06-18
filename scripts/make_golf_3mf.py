@@ -27,7 +27,7 @@ OUT = f"data/board_{ACTIVE}.3mf"
 PITCH_B = 0.4      # base terrain mesh pitch (mm)
 PITCH_F = 0.18     # decal / line mesh pitch (mm)
 
-from golf_common import transform_golf
+from golf_common import transform_golf, hole_outline_mask
 g = transform_golf(json.load(open(f"data/golf_{ACTIVE}.json")), reg)
 dem = np.array(Image.open(reg["src_file"]), dtype=np.float64)
 dem = np.where(dem < -1e30, np.nan, dem)
@@ -173,19 +173,13 @@ for i, (name, color, proud) in enumerate(TURF):
         objects.append((name, "#%02X%02X%02X" % color, *mesh))
         print(f"{name}: {len(mesh[1]):,} tris")
 
-# per-hole outline: the perimeter of each fairway (the hole's playable shape),
-# raised just above the turf as its own recolorable object
-def outline_mask(polys, width_mm):
-    im = Image.new("1", (nxf, nyf), 0)
-    dr = ImageDraw.Draw(im)
-    wpx = max(2, int(width_mm / PITCH_F))
-    for f in polys:
-        pts = [ll_fine(lo, la) for lo, la in f["pts"]]
-        if len(pts) >= 3:
-            dr.line(pts + [pts[0]], fill=1, width=wpx, joint="curve")
-    return np.array(im, bool)
-
-omesh = decal(outline_mask(g["features"].get("fairway", []), 1.0), 0.9)
+# per-hole outline: boundary of each hole's footprint (tee + fairway + green
+# unioned with a min-width corridor), raised above the turf, recolorable
+turf_polys = (g["features"].get("tee", []) + g["features"].get("fairway", [])
+              + g["features"].get("green", []))
+omask = hole_outline_mask(g["holes"], turf_polys, ll_fine, nyf, nxf,
+                          corridor_half_px=3.5 / PITCH_F, stroke_px=0.6 / PITCH_F)
+omesh = decal(omask, 0.9)
 if omesh:
     objects.append(("hole_outline", "#%02X%02X%02X" % OUTLINE_COLOR, *omesh))
     print(f"hole_outline: {len(omesh[1]):,} tris")

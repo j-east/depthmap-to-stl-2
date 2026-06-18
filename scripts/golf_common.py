@@ -3,6 +3,38 @@
 rotate) that registers the OSM vector features onto the terrain, since the two
 data sources often have a few metres of horizontal offset."""
 import math
+import numpy as np
+from PIL import Image, ImageDraw
+from scipy import ndimage
+
+
+def hole_outline_mask(holes, turf_polys, to_px, ny, nx, corridor_half_px, stroke_px):
+    """Boolean outline of each hole's footprint = union of its tee/fairway/green
+    polygons + a minimum-width corridor along the tee->green routing (so the
+    pieces connect). Returns the perimeter band of every hole's footprint."""
+    tmasks = []
+    for f in turf_polys:
+        pts = [to_px(p[0], p[1]) for p in f["pts"]]
+        if len(pts) >= 3:
+            im = Image.new("1", (nx, ny), 0)
+            ImageDraw.Draw(im).polygon(pts, fill=1)
+            tmasks.append(np.array(im, bool))
+    outline = np.zeros((ny, nx), bool)
+    for h in holes:
+        pts = [to_px(p[0], p[1]) for p in h["pts"]]
+        if len(pts) < 2:
+            continue
+        lim = Image.new("1", (nx, ny), 0)
+        ImageDraw.Draw(lim).line(pts, fill=1, width=2, joint="curve")
+        corridor = ndimage.distance_transform_edt(~np.array(lim, bool)) <= corridor_half_px
+        foot = corridor.copy()
+        for tm in tmasks:               # add turf this hole's corridor touches
+            if (tm & corridor).any():
+                foot |= tm
+        din = ndimage.distance_transform_edt(foot)
+        dout = ndimage.distance_transform_edt(~foot)
+        outline |= (foot & (din <= stroke_px)) | (~foot & (dout <= stroke_px))
+    return outline
 
 
 def transform_golf(g, reg):

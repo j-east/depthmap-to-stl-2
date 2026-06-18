@@ -14,7 +14,7 @@ ACTIVE = cfg["active"]
 reg = cfg["regions"][ACTIVE]
 MINLON, MINLAT, MAXLON, MAXLAT = reg["bbox"]
 M_SRC = reg["src_m_per_px"]
-from golf_common import transform_golf
+from golf_common import transform_golf, hole_outline_mask
 g = transform_golf(json.load(open(f"data/golf_{ACTIVE}.json")), reg)
 
 a = np.array(Image.open(reg["src_file"]), dtype=np.float64)
@@ -67,11 +67,14 @@ for name, items in g.get("paths", {}).items():
         if len(pts) >= 2:
             draw.line(pts, fill=PATHCOL.get(name, (120, 120, 120, 255)), width=wpx)
 
-# per-hole fairway outlines + hole numbers at hole center
-for f in g["features"].get("fairway", []):
-    pts = [to_px(lon, lat) for lon, lat in f["pts"]]
-    if len(pts) >= 3:
-        draw.line(pts + [pts[0]], fill=(58, 92, 50, 255), width=max(2, W // 650), joint="curve")
+# per-hole footprint outlines (tee+fairway+green) + hole numbers at center
+mm_per_px = 255 / H
+turf_polys = (g["features"].get("tee", []) + g["features"].get("fairway", [])
+              + g["features"].get("green", []))
+omask = hole_outline_mask(g["holes"], turf_polys, to_px, H, W,
+                          corridor_half_px=3.5 / mm_per_px, stroke_px=0.7 / mm_per_px)
+pim.paste((58, 92, 50), mask=Image.fromarray((omask * 255).astype("uint8")))
+draw = ImageDraw.Draw(pim, "RGBA")
 try:
     font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", max(20, W // 70))
 except Exception:
