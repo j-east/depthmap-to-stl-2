@@ -44,11 +44,12 @@ print(f"{ACTIVE}: board {BW:.0f} x {BH:.0f} mm, relief {dem.max()*ZPM:.1f} mm ov
 # turf paint layers, low->high precedence; (color, proud mm)
 TURF = [
     ("fairway", (150, 200, 104), 0.5),
-    ("tee",     (150, 200, 104), 0.5),
+    ("tee",     (118, 176, 120), 0.6),   # own object/color (was merged w/ fairway)
     ("water",   (64, 132, 196), 0.3),
     ("bunker",  (238, 222, 170), 0.6),
     ("green",   (198, 226, 128), 0.8),
 ]
+ROUTING_COLOR = (245, 245, 245)   # tee->green centerline; change freely
 PATHS = [("cartpath", (224, 214, 188), 0.45, 0.9),   # (name, color, proud, width mm)
          ("road",     (96, 96, 100), 0.5, 1.6),
          ("rail",     (132, 86, 60), 0.6, 1.4)]       # railroad: warm brown, distinct from road
@@ -67,10 +68,7 @@ nyf, nxf = int(BH / PITCH_F), int(BW / PITCH_F)
 turf_img = Image.new("L", (nxf, nyf), 0)
 td = ImageDraw.Draw(turf_img)
 for i, (name, _, _) in enumerate(TURF):
-    if name == "tee":   # tees share the fairway layer index
-        idx = 1
-    else:
-        idx = i + 1
+    idx = i + 1
     for f in g["features"].get(name, []):
         pts = [ll_fine(lo, la) for lo, la in f["pts"]]
         if len(pts) >= 3:
@@ -166,15 +164,30 @@ V_base, F_base = block_mesh(np.ones((nyb, nxb), bool), ztb, np.zeros_like(ztb), 
 objects = [("rough", "#4E7842", V_base, F_base)]
 print(f"rough: {len(F_base):,} tris")
 
-# turf decals (water handled separately above)
+# turf decals (water handled separately above as a flat pond)
 for i, (name, color, proud) in enumerate(TURF):
-    if name in ("tee", "water"):
-        continue  # tee merged into fairway idx 1; water is the flat pond
-    idx = i + 1
-    mesh = decal(turf_lbl == idx, proud)
+    if name == "water":
+        continue
+    mesh = decal(turf_lbl == (i + 1), proud)
     if mesh:
         objects.append((name, "#%02X%02X%02X" % color, *mesh))
         print(f"{name}: {len(mesh[1]):,} tris")
+
+# tee->green routing centerlines: own object, raised above the turf
+def line_mask(polylines, width_mm):
+    im = Image.new("1", (nxf, nyf), 0)
+    dr = ImageDraw.Draw(im)
+    wpx = max(2, int(width_mm / PITCH_F))
+    for pl in polylines:
+        pts = [ll_fine(lo, la) for lo, la in pl]
+        if len(pts) >= 2:
+            dr.line(pts, fill=1, width=wpx, joint="curve")
+    return np.array(im, bool)
+
+rmesh = decal(line_mask([h["pts"] for h in g["holes"]], 1.1), 1.0)
+if rmesh:
+    objects.append(("routing", "#%02X%02X%02X" % ROUTING_COLOR, *rmesh))
+    print(f"routing: {len(rmesh[1]):,} tris")
 if water_mesh:
     objects.append(("water", "#%02X%02X%02X" % dict(((n, c) for n, c, _ in TURF))["water"],
                     *water_mesh))
@@ -194,11 +207,24 @@ try:
     font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", int(LABEL_MM / PITCH_F))
 except Exception:
     font = ImageFont.load_default()
+def arc_midpoint(pts):
+    """lon/lat at the halfway point along the routing polyline (hole center)."""
+    d = [0.0]
+    for (a, b), (c, e) in zip(pts, pts[1:]):
+        d.append(d[-1] + math.hypot(c - a, e - b))
+    half = d[-1] / 2
+    for k in range(1, len(d)):
+        if d[k] >= half:
+            t = (half - d[k - 1]) / (d[k] - d[k - 1] or 1)
+            return [pts[k - 1][0] + t * (pts[k][0] - pts[k - 1][0]),
+                    pts[k - 1][1] + t * (pts[k][1] - pts[k - 1][1])]
+    return pts[len(pts) // 2]
+
 sw, sh = int(2.0 * LABEL_MM / PITCH_F), int(1.6 * LABEL_MM / PITCH_F)
 for h in g["holes"]:
     if not h["ref"]:
         continue
-    lo, la = h["pts"][-1]
+    lo, la = arc_midpoint(h["pts"])   # hole center, off the green
     fx, fy = ll_fine(lo, la)
     stamp = Image.new("1", (sw, sh), 0)
     ImageDraw.Draw(stamp).text((sw // 2, sh // 2), str(h["ref"]), fill=1, font=font, anchor="mm")
