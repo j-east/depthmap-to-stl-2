@@ -25,7 +25,9 @@ h_m = (maxlat - minlat) * 111320
 if reg["source"] in ("noaa", "usgs"):
     import urllib.parse
     s = max_px / max(w_m, h_m)
-    W, H = round(w_m * s), round(h_m * s)
+    MIN_RES = 0.8   # m/px floor: finer than the source serves -> HTTP 500
+    s = min(s, 1.0 / MIN_RES)
+    W, H = max(1, round(w_m * s)), max(1, round(h_m * s))
     m_per_px = h_m / H
     HOSTS = {
         "noaa": "https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_all/ImageServer/exportImage",
@@ -34,7 +36,8 @@ if reg["source"] in ("noaa", "usgs"):
     params = urllib.parse.urlencode({
         "bbox": f"{minlon},{minlat},{maxlon},{maxlat}", "bboxSR": "4326", "imageSR": "4326",
         "size": f"{W},{H}", "format": "tiff", "pixelType": "F32",
-        "interpolation": "RSP_BilinearInterpolation", "f": "image"})
+        "interpolation": "RSP_BilinearInterpolation", "adjustAspectRatio": "false",
+        "f": "image"})
     print(f"{name}: {w_m/1000:.1f} x {h_m/1000:.1f} km -> {W}x{H} ({m_per_px:.1f} m/px) from {reg['source']}")
     urllib.request.urlretrieve(HOSTS[reg["source"]] + "?" + params, reg["src_file"])
 

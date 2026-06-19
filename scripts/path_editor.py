@@ -52,6 +52,7 @@ HTML = """<!DOCTYPE html>
   canvas { position:absolute; left:0; top:0; cursor:crosshair; }
 </style></head><body>
 <div id="side">
+  <a href="/" style="color:#7dd3fc;font-size:12px;text-decoration:none">&larr; Projects</a>
   <h2>Course editor</h2>
   <select id="regionSel"></select>
   <div class="row">
@@ -488,6 +489,117 @@ img.onload = ()=>{ imgW=img.naturalWidth; imgH=img.naturalHeight;
 HTML = (HTML.replace("%MINLON%", str(MINLON)).replace("%MAXLON%", str(MAXLON))
             .replace("%MINLAT%", str(MINLAT)).replace("%MAXLAT%", str(MAXLAT)))
 
+DASH_HTML = """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Terrain Boards</title>
+<style>
+  body { margin:0; background:#14141c; color:#ddd; font:14px -apple-system,sans-serif; }
+  header { padding:18px 26px; border-bottom:1px solid #2a2a3a; display:flex; align-items:center; gap:16px; }
+  header h1 { font-size:19px; margin:0; color:#fff; }
+  #status { color:#8fda8f; font-size:13px; }
+  #grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:18px; padding:24px; }
+  .card { background:#1d1d28; border:1px solid #2e2e40; border-radius:10px; overflow:hidden; }
+  .card.active { border-color:#2563eb; }
+  .thumb { width:100%; height:200px; object-fit:cover; background:#0c0c12; display:block; cursor:pointer; }
+  .thumb.ph { display:flex; align-items:center; justify-content:center; color:#555; font-size:12px; }
+  .meta { padding:10px 12px; }
+  .meta h3 { margin:0 0 4px; font-size:15px; color:#fff; }
+  .badge { font-size:11px; padding:2px 7px; border-radius:10px; background:#2e2e40; color:#bcd; }
+  .badge.golf { background:#1f4d2e; color:#9f9; } .badge.cribbage { background:#3a2f4d; color:#caf; }
+  .acts { display:flex; flex-wrap:wrap; gap:5px; padding:0 12px 12px; }
+  button { border:0; border-radius:6px; background:#2e2e40; color:#eee; font-size:12px; padding:6px 9px; cursor:pointer; }
+  button:hover { background:#3a3a52; } button.p { background:#2563eb; } button.p:hover { background:#3b82f6; }
+  .newcard { border:2px dashed #3a3a52; border-radius:10px; display:flex; align-items:center;
+             justify-content:center; min-height:260px; cursor:pointer; color:#8a8aa0; font-size:15px; }
+  .newcard:hover { border-color:#2563eb; color:#cdf; }
+  #modal { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:center; justify-content:center; }
+  #panel { background:#1d1d28; border:1px solid #2e2e40; border-radius:12px; padding:22px; width:440px; max-height:86vh; overflow:auto; }
+  #panel h2 { margin:0 0 14px; font-size:17px; }
+  label { display:block; font-size:12px; color:#9a9ab0; margin:10px 0 3px; }
+  input, select { width:100%; box-sizing:border-box; background:#22222e; color:#eee; border:1px solid #3a3a52; border-radius:6px; padding:8px; }
+  .row { display:flex; gap:8px; } .row>* { flex:1; }
+  .geo { max-height:150px; overflow:auto; margin-top:6px; }
+  .geo div { padding:6px 8px; border-radius:5px; cursor:pointer; font-size:12px; color:#bcd; }
+  .geo div:hover { background:#2e2e40; }
+</style></head><body>
+<header><h1>🗺 Terrain Boards</h1><span id="status">loading…</span></header>
+<div id="grid"></div>
+<div id="modal"><div id="panel">
+  <h2>New project</h2>
+  <label>Name<input id="nName" placeholder="e.g. pebble-beach"></label>
+  <div class="row">
+    <div><label>Type<select id="nKind"><option value="golf">golf course</option><option value="cribbage">cribbage board</option></select></label></div>
+    <div><label>Terrain<select id="nSrc"><option value="usgs">USGS 3DEP (US land)</option><option value="noaa">NOAA CUDEM (US coast)</option><option value="terrarium">Terrarium (global)</option></select></label></div>
+  </div>
+  <label>Search a place</label>
+  <div class="row"><input id="nQ" placeholder="course or place name"><button onclick="geo()">Find</button></div>
+  <div class="geo" id="nGeo"></div>
+  <label>Bounding box (W,S,E,N)</label>
+  <input id="nBox" placeholder="-75.32,39.99,-75.30,40.01">
+  <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">
+    <button onclick="closeModal()">Cancel</button>
+    <button class="p" id="nGo" onclick="create()">Create &amp; fetch terrain</button>
+  </div>
+</div></div>
+<script>
+const S=document.getElementById('status');
+async function load(){
+  const d=await (await fetch('/projects')).json();
+  const g=document.getElementById('grid'); g.innerHTML='';
+  for(const p of d.projects){
+    const c=document.createElement('div'); c.className='card'+(p.active?' active':'');
+    const th=p.thumb ? `<img class=thumb src="/thumb/${p.name}?${Date.now()}" onclick="openP('${p.name}')">`
+                     : `<div class="thumb ph" onclick="openP('${p.name}')">no preview yet</div>`;
+    c.innerHTML=th+`<div class=meta><h3>${p.name}</h3>
+      <span class="badge ${p.kind}">${p.kind}</span> <span class=badge>${p.source}</span></div>
+      <div class=acts>
+        <button class=p onclick="openP('${p.name}')">Open</button>
+        <button onclick="build('${p.name}')">Build</button>
+        <button onclick="dup('${p.name}')">Duplicate</button>
+        <button onclick="ren('${p.name}')">Rename</button>
+        <button onclick="del('${p.name}')">Delete</button>
+      </div>`;
+    g.appendChild(c);
+  }
+  const nc=document.createElement('div'); nc.className='newcard'; nc.textContent='+ New project';
+  nc.onclick=openModal; g.appendChild(nc);
+  S.textContent=d.projects.length+' projects';
+}
+async function openP(n){ S.textContent='opening '+n+'…';
+  await fetch('/region',{method:'POST',body:JSON.stringify({name:n})}); location='/editor'; }
+async function build(n){ S.textContent='building '+n+'… (1-2 min)';
+  await fetch('/region',{method:'POST',body:JSON.stringify({name:n})});
+  const o=await (await fetch('/build',{method:'POST',body:'{}'})).json();
+  S.textContent=o.ok?'built '+n+' → opened in Bambu':'build failed: '+o.log; load(); }
+async function dup(n){ const nn=prompt('Duplicate "'+n+'" as:',n+'-copy'); if(!nn)return;
+  const o=await (await fetch('/project/duplicate',{method:'POST',body:JSON.stringify({name:n,newname:nn})})).json();
+  S.textContent=o.ok?'duplicated':'failed: '+o.log; load(); }
+async function ren(n){ const nn=prompt('Rename "'+n+'" to:',n); if(!nn||nn===n)return;
+  const o=await (await fetch('/project/rename',{method:'POST',body:JSON.stringify({name:n,newname:nn})})).json();
+  S.textContent=o.ok?'renamed':'failed: '+o.log; load(); }
+async function del(n){ if(!confirm('Delete "'+n+'" and its data?'))return;
+  const o=await (await fetch('/project/delete',{method:'POST',body:JSON.stringify({name:n})})).json();
+  S.textContent=o.ok?'deleted':'failed: '+o.log; load(); }
+function openModal(){ document.getElementById('modal').style.display='flex'; }
+function closeModal(){ document.getElementById('modal').style.display='none'; }
+async function geo(){ const q=document.getElementById('nQ').value;
+  const r=await (await fetch('/geocode?q='+encodeURIComponent(q))).json();
+  const el=document.getElementById('nGeo'); el.innerHTML='';
+  r.forEach(x=>{ const d=document.createElement('div'); d.textContent=x.name;
+    d.onclick=()=>{ document.getElementById('nBox').value=x.bbox.map(v=>v.toFixed(5)).join(','); }; el.appendChild(d); }); }
+async function create(){
+  const name=document.getElementById('nName').value.trim();
+  const box=document.getElementById('nBox').value.split(',').map(Number);
+  if(!name||box.length!==4||box.some(isNaN)){ alert('need a name and a valid W,S,E,N bbox'); return; }
+  document.getElementById('nGo').disabled=true; S.textContent='creating '+name+'… fetching terrain (up to ~1 min)';
+  const o=await (await fetch('/project/create',{method:'POST',body:JSON.stringify({
+    name, kind:document.getElementById('nKind').value, source:document.getElementById('nSrc').value, bbox:box})})).json();
+  document.getElementById('nGo').disabled=false;
+  if(o.ok){ closeModal(); S.textContent='created '+o.name; load(); }
+  else S.textContent='create failed: '+o.log;
+}
+load();
+</script></body></html>"""
+
 
 def _regions_cfg():
     return json.load(open(os.path.join(ROOT, "data/regions.json")))
@@ -514,6 +626,39 @@ def _render_script():
 def _build_script():
     return "scripts/make_golf_3mf.py" if _kind() == "golf" else "scripts/make_board_3mf.py"
 
+def _save_thumb(name):
+    src = os.path.join(ROOT, "data/route_prototype.png")
+    if os.path.exists(src):
+        import shutil
+        shutil.copy(src, os.path.join(ROOT, f"data/preview_{name}.png"))
+
+def _geocode(q):
+    if not q.strip():
+        return []
+    import urllib.parse, urllib.request
+    u = "https://nominatim.openstreetmap.org/search?" + urllib.parse.urlencode(
+        {"q": q, "format": "json", "limit": 6})
+    req = urllib.request.Request(u, headers={"User-Agent": "terrain-cribbage/1.0 (jakepevans@gmail.com)"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            res = json.load(r)
+    except Exception:
+        return []
+    out = []
+    for x in res:
+        bb = x.get("boundingbox")  # [s, n, w, e]
+        if not bb:
+            continue
+        out.append({"name": x.get("display_name", "")[:70],
+                    "bbox": [float(bb[2]), float(bb[0]), float(bb[3]), float(bb[1])]})
+    return out
+
+def _run(script, timeout=900):
+    env = dict(os.environ, PYTHONPATH=".pydeps")
+    r = subprocess.run(["python3"] + script.split(), cwd=ROOT, env=env,
+                       capture_output=True, text=True, timeout=timeout)
+    return r.returncode == 0, "\n".join((r.stdout + r.stderr).strip().splitlines()[-6:])
+
 
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
@@ -535,7 +680,30 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/":
+            self._send(200, DASH_HTML, "text/html")
+        elif self.path == "/editor":
             self._send(200, HTML, "text/html")
+        elif self.path.startswith("/thumb/"):
+            name = self.path[len("/thumb/"):].split("?")[0]
+            p = os.path.join(ROOT, f"data/preview_{name}.png")
+            if os.path.exists(p):
+                with open(p, "rb") as f:
+                    self._send(200, f.read(), "image/png")
+            else:
+                self._send(404, b"not found", "text/plain")
+        elif self.path == "/projects":
+            cfg = _regions_cfg(); act = cfg["active"]
+            out = []
+            for nm, r in sorted(cfg["regions"].items()):
+                out.append({"name": nm, "kind": r.get("kind", "cribbage"),
+                            "source": r.get("source", "?"), "bbox": r["bbox"],
+                            "active": nm == act,
+                            "thumb": os.path.exists(os.path.join(ROOT, f"data/preview_{nm}.png"))})
+            self._send(200, json.dumps({"projects": out, "active": act}))
+        elif self.path.startswith("/geocode"):
+            from urllib.parse import urlparse, parse_qs
+            q = parse_qs(urlparse(self.path).query).get("q", [""])[0]
+            self._send(200, json.dumps(_geocode(q)))
         elif self.path.startswith("/map.png"):
             self._png("route_prototype.png")
         elif self.path.startswith("/base.png"):
@@ -590,6 +758,94 @@ class H(BaseHTTPRequestHandler):
         if self.path == "/waypoints":
             json.dump(body, open(path, "w"), indent=1)
             self._send(200, '{"ok":true}')
+        elif self.path in ("/project/rename", "/project/duplicate", "/project/delete"):
+            import shutil, glob
+            cfg = _regions_cfg()
+            name = body.get("name")
+            if name not in cfg["regions"]:
+                self._send(400, json.dumps({"ok": False, "log": "unknown project"})); return
+            if self.path == "/project/delete":
+                if len(cfg["regions"]) <= 1:
+                    self._send(400, json.dumps({"ok": False, "log": "can't delete the last project"})); return
+                cfg["regions"].pop(name)
+                if cfg["active"] == name:
+                    cfg["active"] = sorted(cfg["regions"])[0]
+                for f in glob.glob(os.path.join(ROOT, f"data/*_{name}.*")) + \
+                         glob.glob(os.path.join(ROOT, f"data/dem_{name}.tif")):
+                    try: os.remove(f)
+                    except OSError: pass
+                json.dump(cfg, open(os.path.join(ROOT, "data/regions.json"), "w"), indent=1)
+                self._send(200, json.dumps({"ok": True})); return
+            new = (body.get("newname") or "").strip().replace(" ", "-").lower()
+            if not new or new in cfg["regions"]:
+                self._send(400, json.dumps({"ok": False, "log": "bad or duplicate name"})); return
+            if self.path == "/project/rename":
+                cfg["regions"][new] = cfg["regions"].pop(name)
+                if cfg["active"] == name:
+                    cfg["active"] = new
+            else:  # duplicate
+                import copy
+                cfg["regions"][new] = copy.deepcopy(cfg["regions"][name])
+            # move/copy per-project data files (dem, golf, waypoints, features, preview)
+            op = shutil.move if self.path == "/project/rename" else shutil.copy
+            for suf in (f"dem_{name}.tif", f"golf_{name}.json", f"waypoints_{name}.json",
+                        f"features_{name}.json", f"preview_{name}.png"):
+                src = os.path.join(ROOT, "data", suf)
+                if os.path.exists(src):
+                    try: op(src, os.path.join(ROOT, "data", suf.replace(name, new, 1)))
+                    except OSError: pass
+            if self.path == "/project/rename" and "src_file" in cfg["regions"][new]:
+                cfg["regions"][new]["src_file"] = f"data/dem_{new}.tif"
+            elif self.path == "/project/duplicate":
+                cfg["regions"][new]["src_file"] = f"data/dem_{new}.tif"
+            json.dump(cfg, open(os.path.join(ROOT, "data/regions.json"), "w"), indent=1)
+            self._send(200, json.dumps({"ok": True, "name": new}))
+        elif self.path == "/project/create":
+            import math as _m
+            name = (body.get("name") or "").strip().replace(" ", "-").lower()
+            cfg = _regions_cfg()
+            if not name or name in cfg["regions"]:
+                self._send(400, json.dumps({"ok": False, "log": "bad or duplicate name"})); return
+            bbox = body["bbox"]; kind = body.get("kind", "golf"); source = body.get("source", "usgs")
+            reg = {"bbox": bbox, "source": source, "src_file": f"data/dem_{name}.tif",
+                   "src_m_per_px": None, "datum_m": 0, "kind": kind,
+                   "exag": 4.0 if kind == "golf" else 5.0,
+                   "base_mm": 8.0 if kind == "golf" else 10.0, "landmarks": []}
+            if kind == "golf":
+                reg["board_rotation_deg"] = None  # auto-fit
+                reg["feature_transform"] = {"dx_m": 0, "dy_m": 0, "scale_x": 1.0, "scale_y": 1.0, "rot_deg": 0}
+            prev_active = cfg["active"]
+            cfg["regions"][name] = reg; cfg["active"] = name
+            json.dump(cfg, open(os.path.join(ROOT, "data/regions.json"), "w"), indent=1)
+            if not run_lock.acquire(blocking=False):
+                self._send(409, json.dumps({"ok": False, "log": "busy"})); return
+            try:
+                ok, log = _run(f"scripts/fetch_dem.py {name} 3000", timeout=600)
+                if not ok:   # roll back the half-made project
+                    c = _regions_cfg(); c["regions"].pop(name, None); c["active"] = prev_active
+                    json.dump(c, open(os.path.join(ROOT, "data/regions.json"), "w"), indent=1)
+                    self._send(200, json.dumps({"ok": False, "log": "terrain fetch failed:\n" + log}))
+                    return
+                created = ok
+                if ok and kind == "golf":
+                    # datum at course low point, then fetch features + preview
+                    import numpy as np
+                    from PIL import Image as _Im
+                    a = np.array(_Im.open(os.path.join(ROOT, reg["src_file"])), float)
+                    a = a[a > -1e30]
+                    cfg = _regions_cfg(); cfg["regions"][name]["datum_m"] = float(_m.floor(a.min()))
+                    json.dump(cfg, open(os.path.join(ROOT, "data/regions.json"), "w"), indent=1)
+                    ok, log = _run("scripts/fetch_golf.py")
+                    if ok:
+                        ok, log = _run(_render_script())
+                    created = ok
+                elif ok:
+                    _run(_render_script())  # cribbage: writes a basemap even w/o a course
+                if os.path.exists(os.path.join(ROOT, "data/route_prototype.png")):
+                    _save_thumb(name)
+                self._send(200, json.dumps({"ok": created, "log": log, "name": name}))
+            finally:
+                run_lock.release()
         elif self.path == "/build":
             act = _active()
             if _kind() != "golf":
@@ -612,6 +868,7 @@ class H(BaseHTTPRequestHandler):
                 log = "\n".join((r.stdout + r.stderr).strip().splitlines()[-6:])
                 ok = r.returncode == 0
                 if ok:
+                    _save_thumb(act)
                     subprocess.run(["open", os.path.join(ROOT, f"data/board_{act}.3mf")])
                 self._send(200, json.dumps({"ok": ok, "log": log}))
             finally:
@@ -630,6 +887,8 @@ class H(BaseHTTPRequestHandler):
             try:
                 r = subprocess.run(["python3", "scripts/preview_golf.py"], cwd=ROOT,
                                    capture_output=True, text=True, timeout=300)
+                if r.returncode == 0:
+                    _save_thumb(_active())
                 self._send(200, json.dumps({"ok": r.returncode == 0,
                     "log": "\n".join((r.stdout + r.stderr).strip().splitlines()[-3:])}))
             finally:
@@ -671,6 +930,8 @@ class H(BaseHTTPRequestHandler):
                 r = subprocess.run(["python3", _render_script()], cwd=ROOT, env=env,
                                    capture_output=True, text=True, timeout=900)
                 log = "\n".join((r.stdout + r.stderr).strip().splitlines()[-6:])
+                if r.returncode == 0:
+                    _save_thumb(name)
                 self._send(200, json.dumps({"ok": True, "log": log,
                                             "bbox": cfg["regions"][name]["bbox"]}))
             finally:
@@ -685,6 +946,8 @@ class H(BaseHTTPRequestHandler):
                 r = subprocess.run(["python3", _render_script()], cwd=ROOT, env=env,
                                    capture_output=True, text=True, timeout=900)
                 log = "\n".join((r.stdout + r.stderr).strip().splitlines()[-8:])
+                if r.returncode == 0:
+                    _save_thumb(_active())
                 self._send(200, json.dumps({"ok": r.returncode == 0, "log": log}))
             finally:
                 run_lock.release()

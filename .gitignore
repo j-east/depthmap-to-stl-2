@@ -31,3 +31,7 @@ data/*
 *.njsproj
 *.sln
 *.sw?
+
+# python
+scripts/__pycache__/
+__pycache__/
