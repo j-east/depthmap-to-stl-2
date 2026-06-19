@@ -14,13 +14,24 @@ ACTIVE = cfg["active"]
 reg = cfg["regions"][ACTIVE]
 MINLON, MINLAT, MAXLON, MAXLAT = reg["bbox"]
 M_SRC = reg["src_m_per_px"]
-from golf_common import transform_golf, hole_outline_mask
+from golf_common import transform_golf, hole_outline_mask, board_frame
 g = transform_golf(json.load(open(f"data/golf_{ACTIVE}.json")), reg)
 
-a = np.array(Image.open(reg["src_file"]), dtype=np.float64)
-a = np.where(a < -1e30, np.nan, a)
-a = np.where(np.isnan(a), np.nanmedian(a), a)
-H, W = a.shape
+dem = np.array(Image.open(reg["src_file"]), dtype=np.float64)
+dem = np.where(dem < -1e30, np.nan, dem)
+dem = np.where(np.isnan(dem), np.nanmedian(dem), dem)
+DH, DW = dem.shape
+
+# rotated board frame, resampled to a board-aligned hillshade
+FR = board_frame(reg, g)
+BW, BH = FR["BW"], FR["BH"]
+PR = 0.2  # preview pitch (mm)
+W, H = int(BW / PR), int(BH / PR)
+gx_mm, gy_mm = np.meshgrid(np.arange(W) * PR, np.arange(H) * PR)
+glon, glat = FR["mm_to_ll"](gx_mm, BH - gy_mm)
+dc = np.clip(((glon - MINLON) / (MAXLON - MINLON) * (DW - 1)).astype(int), 0, DW - 1)
+dr = np.clip(((MAXLAT - glat) / (MAXLAT - MINLAT) * (DH - 1)).astype(int), 0, DH - 1)
+a = dem[dr, dc]
 
 # layer paint order (back to front) and colors
 COLORS = {
@@ -32,9 +43,9 @@ COLORS = {
 }
 ORDER = ["fairway", "tee", "water", "bunker", "green"]
 
-# base = rough, hillshaded
-gy, gx = np.gradient(a, M_SRC, M_SRC)
-slope = np.arctan(np.hypot(gx, gy))
+# base = rough, hillshaded (gradient in board mm)
+gy, gx = np.gradient(a)
+slope = np.arctan(np.hypot(gx, gy) / (PR / FR["mm_per_m"]))
 aspect = np.arctan2(-gx, gy)
 az, alt = math.radians(315), math.radians(45)
 hs = np.clip(np.sin(alt) * np.cos(slope) + np.cos(alt) * np.sin(slope) * np.cos(az - aspect), 0, 1)
@@ -44,8 +55,8 @@ pim = Image.fromarray(img)
 draw = ImageDraw.Draw(pim, "RGBA")
 
 def to_px(lon, lat):
-    return ((lon - MINLON) / (MAXLON - MINLON) * W,
-            (MAXLAT - lat) / (MAXLAT - MINLAT) * H)
+    x_mm, y_mm = FR["to_mm"](lon, lat)
+    return float(x_mm) / PR, (BH - float(y_mm)) / PR
 
 # semi-transparent turf so the hillshade (rail embankment, brook channel,
 # leveled green pads) reads through it for alignment
@@ -61,14 +72,14 @@ PATHCOL = {"cartpath": (224, 214, 188, 255), "road": (96, 96, 100, 255),
            "footway": (210, 196, 170, 200), "rail": (132, 86, 60, 255)}
 PATHW = {"cartpath": 0.9, "road": 1.0, "footway": 0.7, "rail": 1.5}
 for name, items in g.get("paths", {}).items():
-    wpx = max(1, int(PATHW.get(name, 1.0) / M_SRC / (255 / H)))
+    wpx = max(1, int(PATHW.get(name, 1.0) / PR))
     for p in items:
         pts = [to_px(lon, lat) for lon, lat in p["pts"]]
         if len(pts) >= 2:
             draw.line(pts, fill=PATHCOL.get(name, (120, 120, 120, 255)), width=wpx)
 
 # per-hole footprint outlines (tee+fairway+green) + hole numbers at center
-mm_per_px = 255 / H
+mm_per_px = PR
 turf_polys = (g["features"].get("tee", []) + g["features"].get("fairway", [])
               + g["features"].get("green", []))
 exclude = (g["features"].get("bunker", []) + g["features"].get("green", [])

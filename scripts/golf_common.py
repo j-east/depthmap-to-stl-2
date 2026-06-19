@@ -8,6 +8,52 @@ from PIL import Image, ImageDraw
 from scipy import ndimage
 
 
+def board_frame(reg, g, long_mm=255.0, margin_m=35.0):
+    """Map lon/lat <-> board millimetres in a frame that may be rotated to fit
+    the course. board_rotation_deg in the region picks the angle; if unset, the
+    minimum-area bounding rectangle of all features is used (tightest fit).
+    Returns dict: BW, BH (mm), mm_per_m, theta_deg, to_mm(lon,lat),
+    mm_to_ll(xmm,ymm) (both vectorised)."""
+    pts = []
+    for layer in g.get("features", {}).values():
+        for f in layer:
+            pts += f["pts"]
+    for h in g.get("holes", []):
+        pts += h["pts"]
+    P = np.array(pts, float)
+    clon, clat = P[:, 0].mean(), P[:, 1].mean()
+    mlon = 111320 * math.cos(math.radians(clat)); mlat = 111320
+    E = (P[:, 0] - clon) * mlon; N = (P[:, 1] - clat) * mlat
+    th = reg.get("board_rotation_deg")
+    if th is None:
+        best = None
+        for a in range(0, 90):
+            r = math.radians(a); c, s = math.cos(r), math.sin(r)
+            u = E * c + N * s; v = -E * s + N * c
+            area = np.ptp(u) * np.ptp(v)
+            if best is None or area < best[0]:
+                best = (area, a)
+        th = float(best[1])
+    r = math.radians(th); c, s = math.cos(r), math.sin(r)
+    u = E * c + N * s; v = -E * s + N * c
+    umin, umax = u.min() - margin_m, u.max() + margin_m
+    vmin, vmax = v.min() - margin_m, v.max() + margin_m
+    mmpm = long_mm / max(umax - umin, vmax - vmin)
+    BW, BH = (umax - umin) * mmpm, (vmax - vmin) * mmpm
+
+    def to_mm(lon, lat):
+        e = (np.asarray(lon) - clon) * mlon; n = (np.asarray(lat) - clat) * mlat
+        uu = e * c + n * s; vv = -e * s + n * c
+        return (uu - umin) * mmpm, (vv - vmin) * mmpm
+
+    def mm_to_ll(xmm, ymm):
+        uu = umin + np.asarray(xmm) / mmpm; vv = vmin + np.asarray(ymm) / mmpm
+        e = uu * c - vv * s; n = uu * s + vv * c
+        return clon + e / mlon, clat + n / mlat
+
+    return dict(BW=BW, BH=BH, mm_per_m=mmpm, theta_deg=th, to_mm=to_mm, mm_to_ll=mm_to_ll)
+
+
 def _rasterize(polys, to_px, ny, nx):
     out = []
     for f in polys:

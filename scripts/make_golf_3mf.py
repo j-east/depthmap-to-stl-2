@@ -27,19 +27,25 @@ OUT = f"data/board_{ACTIVE}.3mf"
 PITCH_B = 0.4      # base terrain mesh pitch (mm)
 PITCH_F = 0.18     # decal / line mesh pitch (mm)
 
-from golf_common import transform_golf, hole_outline_mask
+from golf_common import transform_golf, hole_outline_mask, board_frame
 g = transform_golf(json.load(open(f"data/golf_{ACTIVE}.json")), reg)
 dem = np.array(Image.open(reg["src_file"]), dtype=np.float64)
 dem = np.where(dem < -1e30, np.nan, dem)
 dem = np.where(np.isnan(dem), np.nanmedian(dem), dem) - DATUM_M
 H, W = dem.shape
 
-BH = 255.0
-BW = BH * W / H
-MMPP = BH / H
-ZPM = MMPP / M_SRC * EXAG
-print(f"{ACTIVE}: board {BW:.0f} x {BH:.0f} mm, relief {dem.max()*ZPM:.1f} mm over {BASE_MM} mm base "
-      f"(exag {EXAG}x)")
+# rotated board frame fitted to the course
+FR = board_frame(reg, g)
+BW, BH, MM_PER_M = FR["BW"], FR["BH"], FR["mm_per_m"]
+to_mm, mm_to_ll = FR["to_mm"], FR["mm_to_ll"]
+ZPM = MM_PER_M * EXAG
+print(f"{ACTIVE}: board {BW:.0f} x {BH:.0f} mm, rotation {FR['theta_deg']:.0f}deg, "
+      f"relief {dem.max()*ZPM:.1f} mm over {BASE_MM} mm base (exag {EXAG}x)")
+
+def _ll_to_dem(lon, lat):
+    dc = np.clip(((np.asarray(lon) - MINLON) / (MAXLON - MINLON) * (W - 1)).astype(int), 0, W - 1)
+    dr = np.clip(((MAXLAT - np.asarray(lat)) / (MAXLAT - MINLAT) * (H - 1)).astype(int), 0, H - 1)
+    return dem[dr, dc]
 
 # turf paint layers, low->high precedence; (color, proud mm)
 TURF = [
@@ -57,9 +63,8 @@ ROUGH = (78, 120, 66)
 
 
 def ll_fine(lon, lat):
-    x_mm = (lon - MINLON) / (MAXLON - MINLON) * BW
-    y_mm = (lat - MINLAT) / (MAXLAT - MINLAT) * BH
-    return x_mm / PITCH_F, (BH - y_mm) / PITCH_F
+    x_mm, y_mm = to_mm(lon, lat)
+    return float(x_mm) / PITCH_F, (BH - float(y_mm)) / PITCH_F
 
 
 nyf, nxf = int(BH / PITCH_F), int(BW / PITCH_F)
@@ -90,9 +95,8 @@ def path_mask(name, width_mm):
 def elev_at_corner(rows, cols, pitch, ny, nx):
     x_mm = cols * pitch
     y_mm = BH - rows * pitch
-    dc = np.clip((x_mm / BW * (W - 1)).astype(int), 0, W - 1)
-    dr = np.clip(((BH - y_mm) / BH * (H - 1)).astype(int), 0, H - 1)
-    return dem[dr, dc]
+    lon, lat = mm_to_ll(x_mm, y_mm)
+    return _ll_to_dem(lon, lat)
 
 # ---------------- generic masked column mesher ----------------
 def block_mesh(mask, ztop, zbot, pitch):
@@ -267,17 +271,18 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-R = 4
-rr, cc = np.meshgrid(np.arange(0, H, R), np.arange(0, W, R), indexing="ij")
-Z = BASE_MM + np.maximum(dem[::R, ::R], 0.0) * ZPM
-Xr = cc * MMPP; Yr = BH - rr * MMPP
-# color grid: rasterize turf+paths at render resolution
-ry, rx = Z.shape
+# board-frame render grid (rotated to match the printed board)
+PR = 0.7  # render pitch (mm)
+rx, ry = int(BW / PR), int(BH / PR)
+gx_mm, gy_mm = np.meshgrid(np.arange(rx) * PR, np.arange(ry) * PR)
+glon, glat = mm_to_ll(gx_mm, BH - gy_mm)
+Z = BASE_MM + np.maximum(_ll_to_dem(glon, glat), 0.0) * ZPM
+Xr, Yr = gx_mm, BH - gy_mm
 col_im = Image.new("RGB", (rx, ry), ROUGH)
 cd = ImageDraw.Draw(col_im)
 def ll_rend(lon, lat):
-    return ((lon - MINLON) / (MAXLON - MINLON) * rx,
-            (MAXLAT - lat) / (MAXLAT - MINLAT) * ry)
+    x_mm, y_mm = to_mm(lon, lat)
+    return float(x_mm) / PR, (BH - float(y_mm)) / PR
 for i, (name, color, _) in enumerate(TURF):
     for f in g["features"].get(name, []):
         pts = [ll_rend(lo, la) for lo, la in f["pts"]]
@@ -292,7 +297,7 @@ for name, color, _, wmm in PATHS:
 facec = np.asarray(col_im, np.float64)[:, :, :3] / 255
 # hillshade modulation
 gy, gx = np.gradient(Z)
-sl = np.arctan(np.hypot(gx, gy) / (R * MMPP)); asp = np.arctan2(-gx, gy)
+sl = np.arctan(np.hypot(gx, gy) / PR); asp = np.arctan2(-gx, gy)
 hsd = np.clip(math.sin(math.radians(45)) * np.cos(sl) +
               math.cos(math.radians(45)) * np.sin(sl) * np.cos(math.radians(315) - asp), 0, 1)
 facec = np.clip(facec * (0.55 + 0.6 * hsd)[..., None], 0, 1)
