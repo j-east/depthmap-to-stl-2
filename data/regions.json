@@ -1,5 +1,5 @@
 {
- "active": "merion-east",
+ "active": "the-country-club",
  "regions": {
   "deer-isle": {
    "bbox": [
@@ -112,6 +112,31 @@
     "scale_y": 0.775,
     "rot_deg": 0.0
    }
+  },
+  "the-country-club": {
+   "bbox": [
+    -71.1596,
+    42.30755,
+    -71.1417,
+    42.31945
+   ],
+   "source": "usgs",
+   "src_file": "data/dem_the-country-club.tif",
+   "src_m_per_px": 0.8,
+   "datum_m": 50.0,
+   "kind": "golf",
+   "exag": 4.0,
+   "base_mm": 8.0,
+   "landmarks": [],
+   "board_rotation_deg": null,
+   "feature_transform": {
+    "dx_m": 0,
+    "dy_m": 0,
+    "scale_x": 1.0,
+    "scale_y": 1.0,
+    "rot_deg": 0
+   },
+   "course_name": "The Country Club"
   }
  }
 }

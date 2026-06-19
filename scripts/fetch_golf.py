@@ -28,10 +28,14 @@ def overpass(q):
 q = (f'[out:json][timeout:80];'
      f'('
      f'way["golf"]({MINLAT},{MINLON},{MAXLAT},{MAXLON});'
+     f'way["leisure"="golf_course"]({MINLAT},{MINLON},{MAXLAT},{MAXLON});'
      f'way["highway"]({MINLAT},{MINLON},{MAXLAT},{MAXLON});'
      f'way["railway"]({MINLAT},{MINLON},{MAXLAT},{MAXLON});'
      f');'
      f'out tags geom 2500;')
+
+# optional: clip turf/holes to a single named course (excludes neighbours)
+COURSE_NAME = cfg["regions"][ACTIVE].get("course_name")
 
 # normalize the zoo of golf tags into a few paint layers
 LAYER = {
@@ -43,6 +47,7 @@ feats = {k: [] for k in ("rough", "fairway", "tee", "green", "bunker", "water")}
 paths = {"cartpath": [], "road": [], "footway": [], "rail": []}
 holes = []
 dr_polys = []   # driving-range polygons, used only to drop the range's tee
+course_polys = []  # (name, polygon) for leisure=golf_course
 RAIL = {"rail", "light_rail", "subway", "tram", "narrow_gauge", "preserved"}
 
 def in_poly(pt, poly):
@@ -63,6 +68,9 @@ for e in overpass(q).get("elements", []):
     rw = t.get("railway")
     geom = [[p["lon"], p["lat"]] for p in e.get("geometry", [])]
     if len(geom) < 2:
+        continue
+    if t.get("leisure") == "golf_course":
+        course_polys.append((t.get("name", ""), geom))
         continue
     if rw in RAIL:
         paths["rail"].append({"pts": geom})
@@ -100,6 +108,23 @@ if dr_polys:
             kept.append(tee)
     feats["tee"] = kept
     print(f"dropped {before - len(kept)} driving-range tee(s)")
+
+# clip turf, holes and cartpaths to the chosen course polygon (drops neighbours)
+clip = None
+if COURSE_NAME and course_polys:
+    matches = [p for n, p in course_polys if COURSE_NAME.lower() in n.lower()]
+    clip = matches[0] if matches else max((p for _, p in course_polys), key=len)
+elif len(course_polys) > 1:
+    clip = max((p for _, p in course_polys), key=len)  # default: largest course
+if clip:
+    def cen(pts):
+        return (sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts))
+    for layer in feats:
+        feats[layer] = [f for f in feats[layer] if in_poly(cen(f["pts"]), clip)]
+    feats_holes = [h for h in holes if in_poly(cen(h["pts"]), clip)]
+    paths["cartpath"] = [p for p in paths["cartpath"] if in_poly(cen(p["pts"]), clip)]
+    print(f"clipped to course polygon ({len(holes)}->{len(feats_holes)} holes)")
+    holes = feats_holes
 
 out = f"data/golf_{ACTIVE}.json"
 json.dump({"features": feats, "paths": paths, "holes": holes,
