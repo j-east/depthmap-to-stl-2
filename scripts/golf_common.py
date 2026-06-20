@@ -87,7 +87,8 @@ def board_frame(reg, g, long_mm=255.0, margin_m=35.0):
         e = uu * c - vv * s; n = uu * s + vv * c
         return clon + e / mlon, clat + n / mlat
 
-    return dict(BW=BW, BH=BH, mm_per_m=mmpm, theta_deg=th, to_mm=to_mm, mm_to_ll=mm_to_ll)
+    return dict(BW=BW, BH=BH, mm_per_m=mmpm, theta_deg=th, to_mm=to_mm, mm_to_ll=mm_to_ll,
+                clon=clon, clat=clat, umin=umin, vmin=vmin)
 
 
 def _rasterize(polys, to_px, ny, nx):

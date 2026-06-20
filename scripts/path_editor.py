@@ -97,6 +97,14 @@ HTML = """<!DOCTYPE html>
     <button id="satLoad">Load / refresh imagery</button>
     <label>opacity <input type="range" id="satOp" min="0" max="100" value="0" style="width:100%"></label>
     <button id="autofill">✚ Autofill missing fairways</button>
+    <hr style="border-color:#2e2e40">
+    <b style="font-size:12px">Add a feature by hand</b>
+    <select id="featType"><option>fairway</option><option>green</option><option>tee</option>
+      <option>bunker</option><option>water</option></select>
+    <div class="row">
+      <button id="featDraw">✏️ Draw polygon</button><button id="featFinish">Finish</button>
+    </div>
+    <button id="featClear">Clear hand-added</button>
   </div>
   <div id="alignPanel" style="display:none;border:1px solid #3a3a52;border-radius:7px;padding:8px;margin:8px 0">
     <b style="font-size:12px">Align features to terrain</b>
@@ -157,6 +165,9 @@ function setMode(m){ mode=m;
     : m=='crop'
     ? '<b>Drag</b> a rectangle: that area becomes the board, scaled to 255 mm '
       + 'on its long side. Hole spacing is computed at board scale.'
+    : m=='feat'
+    ? '<b>Click</b> to drop polygon vertices around the missing feature (turn on '
+      + 'the satellite overlay to trace). <b>Finish</b> closes &amp; saves it.'
     : '<b>Drag</b> a label to place it by hand (blue = hand-placed, gold = your '
       + 'place names). <b>Right-click</b>: revert auto label / delete place name. '
       + 'The baked-in map text moves after Save &amp; Re-route.';
@@ -231,6 +242,14 @@ function draw(){
   ctx.clearRect(0,0,cv.width,cv.height);
   drawCrop();
   drawLabels();
+  if(mode=='feat' && featPts.length){
+    ctx.strokeStyle='#34d399'; ctx.fillStyle='rgba(52,211,153,.25)';
+    ctx.lineWidth=Math.max(2,3/zoom); ctx.beginPath(); ctx.moveTo(...featPts[0]);
+    featPts.slice(1).forEach(p=>ctx.lineTo(...p)); if(featPts.length>2) ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    featPts.forEach(p=>{ ctx.beginPath(); ctx.arc(p[0],p[1],Math.max(3,5/zoom),0,7);
+      ctx.fillStyle='#34d399'; ctx.fill(); });
+  }
   const pts=wps.map(ll2px), lw=Math.max(1.2, 2.2/zoom);
   if(pts.length>1){
     ctx.strokeStyle='rgba(80,220,255,.9)'; ctx.lineWidth=lw;
@@ -295,6 +314,9 @@ function customHit(x,y){
   return -1;
 }
 cv.addEventListener('mousedown', e=>{ const [x,y]=evPos(e);
+  if(mode=='feat'){
+    if(e.button==2){ featPts.pop(); } else { featPts.push([x,y]); }
+    draw(); return; }
   if(mode=='labels'){
     const ci=customHit(x,y);
     if(e.button==2){
@@ -455,6 +477,28 @@ async function load(){ const r=await fetch('/waypoints'); const d=await r.json()
   if(d.min_radius_mm) document.getElementById('radius').value=d.min_radius_mm;
   setMode(d.mode=='drawn'?'draw':'wp'); loadLabels(); }
 document.getElementById('satOp').oninput=e=>{ document.getElementById('sat').style.opacity=e.target.value/100; };
+let featPts=[], frame=null;
+async function loadFrame(){ try{ frame=await (await fetch('/frame')).json(); }catch(e){} }
+function px2llGolf(col,row){
+  const F=frame; const xmm=col/F.imgW*F.BW, ymm=F.BH*(1-row/F.imgH);
+  const uu=F.umin+xmm/F.mm_per_m, vv=F.vmin+ymm/F.mm_per_m;
+  const r=F.theta_deg*Math.PI/180, c=Math.cos(r), s=Math.sin(r);
+  const e=uu*c-vv*s, n=uu*s+vv*c;
+  const mlon=111320*Math.cos(F.clat*Math.PI/180);
+  return [F.clon+e/mlon, F.clat+n/111320];
+}
+document.getElementById('featDraw').onclick=async()=>{ await loadFrame(); featPts=[]; setMode('feat'); };
+document.getElementById('featFinish').onclick=async()=>{
+  if(featPts.length<3||!frame){ status.textContent='need 3+ vertices'; return; }
+  const layer=document.getElementById('featType').value;
+  const pts=featPts.map(p=>px2llGolf(p[0],p[1]));
+  status.textContent='adding '+layer+'…'; featPts=[];
+  const o=await (await fetch('/feature/add',{method:'POST',body:JSON.stringify({layer,pts})})).json();
+  status.textContent=o.ok?'added '+layer:'failed'; img.src='/map.png?'+Date.now(); await loadFrame(); draw(); };
+document.getElementById('featClear').onclick=async()=>{
+  if(!confirm('Remove all hand-added features?'))return;
+  await fetch('/feature/clear',{method:'POST',body:'{}'}); featPts=[];
+  status.textContent='cleared'; img.src='/map.png?'+Date.now(); draw(); };
 document.getElementById('autofill').onclick=async()=>{
   status.textContent='synthesizing fairways…';
   const o=await (await fetch('/autofill',{method:'POST',body:'{}'})).json();
@@ -741,6 +785,22 @@ class H(BaseHTTPRequestHandler):
         elif self.path == "/waypoints":
             p = _wp_path()
             self._send(200, open(p).read() if os.path.exists(p) else '{"waypoints":[]}')
+        elif self.path == "/frame":
+            try:
+                import sys
+                sys.path.insert(0, os.path.join(ROOT, "scripts"))
+                from golf_common import board_frame, transform_golf, merge_extra
+                from PIL import Image as _Im
+                cfg = _regions_cfg(); act = cfg["active"]; reg = cfg["regions"][act]
+                g = transform_golf(merge_extra(
+                    json.load(open(os.path.join(ROOT, f"data/golf_{act}.json"))), act), reg)
+                fr = board_frame(reg, g)
+                im = _Im.open(os.path.join(ROOT, "data/route_prototype.png"))
+                self._send(200, json.dumps({k: fr[k] for k in
+                    ("BW", "BH", "mm_per_m", "theta_deg", "clon", "clat", "umin", "vmin")}
+                    | {"imgW": im.size[0], "imgH": im.size[1]}))
+            except Exception as e:
+                self._send(200, json.dumps({"error": str(e)}))
         elif self.path == "/regions":
             cfg = _regions_cfg()
             act = cfg["active"]
@@ -938,6 +998,26 @@ class H(BaseHTTPRequestHandler):
             try:
                 ok, log = _run("scripts/fetch_satellite.py", timeout=200)
                 self._send(200, json.dumps({"ok": ok, "log": log}))
+            finally:
+                run_lock.release()
+        elif self.path in ("/feature/add", "/feature/clear"):
+            act = _active()
+            mp = os.path.join(ROOT, f"data/golf_manual_{act}.json")
+            man = json.load(open(mp)) if os.path.exists(mp) else {"features": {}}
+            if self.path == "/feature/clear":
+                man = {"features": {}}
+            else:
+                layer = body["layer"]; pts = body["pts"]
+                if len(pts) >= 3:
+                    man.setdefault("features", {}).setdefault(layer, []).append({"pts": pts})
+            json.dump(man, open(mp, "w"))
+            if not run_lock.acquire(blocking=False):
+                self._send(200, json.dumps({"ok": True, "log": "saved (render busy)"})); return
+            try:
+                ok, _ = _run("scripts/preview_golf.py")
+                if ok:
+                    _save_thumb(act)
+                self._send(200, json.dumps({"ok": ok}))
             finally:
                 run_lock.release()
         elif self.path == "/autofill":
