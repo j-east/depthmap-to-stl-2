@@ -96,6 +96,7 @@ HTML = """<!DOCTYPE html>
     <p style="margin:4px 0">Trace missing features (OSM is often incomplete).</p>
     <button id="satLoad">Load / refresh imagery</button>
     <label>opacity <input type="range" id="satOp" min="0" max="100" value="0" style="width:100%"></label>
+    <button id="autofill">✚ Autofill missing fairways</button>
   </div>
   <div id="alignPanel" style="display:none;border:1px solid #3a3a52;border-radius:7px;padding:8px;margin:8px 0">
     <b style="font-size:12px">Align features to terrain</b>
@@ -454,6 +455,11 @@ async function load(){ const r=await fetch('/waypoints'); const d=await r.json()
   if(d.min_radius_mm) document.getElementById('radius').value=d.min_radius_mm;
   setMode(d.mode=='drawn'?'draw':'wp'); loadLabels(); }
 document.getElementById('satOp').oninput=e=>{ document.getElementById('sat').style.opacity=e.target.value/100; };
+document.getElementById('autofill').onclick=async()=>{
+  status.textContent='synthesizing fairways…';
+  const o=await (await fetch('/autofill',{method:'POST',body:'{}'})).json();
+  status.textContent=o.ok?o.log:'failed: '+o.log;
+  img.src='/map.png?'+Date.now(); };
 document.getElementById('satLoad').onclick=async()=>{
   status.textContent='fetching satellite imagery…';
   const o=await (await fetch('/satellite',{method:'POST',body:'{}'})).json();
@@ -931,6 +937,17 @@ class H(BaseHTTPRequestHandler):
                 self._send(409, json.dumps({"ok": False, "log": "busy"})); return
             try:
                 ok, log = _run("scripts/fetch_satellite.py", timeout=200)
+                self._send(200, json.dumps({"ok": ok, "log": log}))
+            finally:
+                run_lock.release()
+        elif self.path == "/autofill":
+            if not run_lock.acquire(blocking=False):
+                self._send(409, json.dumps({"ok": False, "log": "busy"})); return
+            try:
+                ok, log = _run("scripts/autofill_fairways.py", timeout=120)
+                if ok:
+                    ok, _ = _run(_render_script())
+                    _save_thumb(_active())
                 self._send(200, json.dumps({"ok": ok, "log": log}))
             finally:
                 run_lock.release()

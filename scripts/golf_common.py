@@ -8,6 +8,42 @@ from PIL import Image, ImageDraw
 from scipy import ndimage
 
 
+def merge_extra(g, active):
+    """Merge auto-synthesized and hand-added features (data/golf_auto_<a>.json,
+    data/golf_manual_<a>.json) into g before any transform. Each file is
+    {"features": {layer: [{"pts": [...]}]}}."""
+    import os, json
+    for suf in (f"data/golf_auto_{active}.json", f"data/golf_manual_{active}.json"):
+        if not os.path.exists(suf):
+            continue
+        ex = json.load(open(suf))
+        for layer, items in ex.get("features", {}).items():
+            g.setdefault("features", {}).setdefault(layer, []).extend(items)
+    return g
+
+
+def fairway_capsule(line_ll, half_w_m, clat):
+    """Offset a tee->green polyline by half_w_m on both sides into a closed
+    capsule polygon (a synthesized fairway). Returns [[lon,lat],...]."""
+    mlon = 111320 * math.cos(math.radians(clat)); mlat = 111320
+    pm = [(lo * mlon, la * mlat) for lo, la in line_ll]
+    n = len(pm)
+    left, right = [], []
+    for i in range(n):
+        if i == 0:
+            tx, ty = pm[1][0] - pm[0][0], pm[1][1] - pm[0][1]
+        elif i == n - 1:
+            tx, ty = pm[i][0] - pm[i - 1][0], pm[i][1] - pm[i - 1][1]
+        else:
+            tx, ty = pm[i + 1][0] - pm[i - 1][0], pm[i + 1][1] - pm[i - 1][1]
+        L = math.hypot(tx, ty) or 1.0
+        nx, ny = -ty / L * half_w_m, tx / L * half_w_m
+        left.append((pm[i][0] + nx, pm[i][1] + ny))
+        right.append((pm[i][0] - nx, pm[i][1] - ny))
+    poly = left + right[::-1]
+    return [[x / mlon, y / mlat] for x, y in poly]
+
+
 def board_frame(reg, g, long_mm=255.0, margin_m=35.0):
     """Map lon/lat <-> board millimetres in a frame that may be rotated to fit
     the course. board_rotation_deg in the region picks the angle; if unset, the

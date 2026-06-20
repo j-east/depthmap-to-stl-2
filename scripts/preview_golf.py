@@ -14,8 +14,8 @@ ACTIVE = cfg["active"]
 reg = cfg["regions"][ACTIVE]
 MINLON, MINLAT, MAXLON, MAXLAT = reg["bbox"]
 M_SRC = reg["src_m_per_px"]
-from golf_common import transform_golf, hole_outline_mask, board_frame
-g = transform_golf(json.load(open(f"data/golf_{ACTIVE}.json")), reg)
+from golf_common import transform_golf, hole_outline_mask, board_frame, merge_extra
+g = transform_golf(merge_extra(json.load(open(f"data/golf_{ACTIVE}.json")), ACTIVE), reg)
 
 dem = np.array(Image.open(reg["src_file"]), dtype=np.float64)
 dem = np.where(dem < -1e30, np.nan, dem)

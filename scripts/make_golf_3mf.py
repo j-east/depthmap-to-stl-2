@@ -27,8 +27,8 @@ OUT = f"data/board_{ACTIVE}.3mf"
 PITCH_B = 0.4      # base terrain mesh pitch (mm)
 PITCH_F = 0.18     # decal / line mesh pitch (mm)
 
-from golf_common import transform_golf, hole_outline_mask, board_frame
-g = transform_golf(json.load(open(f"data/golf_{ACTIVE}.json")), reg)
+from golf_common import transform_golf, hole_outline_mask, board_frame, merge_extra
+g = transform_golf(merge_extra(json.load(open(f"data/golf_{ACTIVE}.json")), ACTIVE), reg)
 dem = np.array(Image.open(reg["src_file"]), dtype=np.float64)
 dem = np.where(dem < -1e30, np.nan, dem)
 dem = np.where(np.isnan(dem), np.nanmedian(dem), dem) - DATUM_M
