@@ -50,6 +50,7 @@ HTML = """<!DOCTYPE html>
   #stage { position:relative; transform-origin: top left; }
   #map { display:block; user-select:none; -webkit-user-drag:none; }
   canvas { position:absolute; left:0; top:0; cursor:crosshair; }
+  #sat { position:absolute; left:0; top:0; width:100%; height:100%; opacity:0; pointer-events:none; }
 </style></head><body>
 <div id="side">
   <a href="/" style="color:#7dd3fc;font-size:12px;text-decoration:none">&larr; Projects</a>
@@ -90,6 +91,12 @@ HTML = """<!DOCTYPE html>
   <button id="fetchNames">🗺 Auto-add place names</button>
   <label>Selected label size (mm) — or scroll over a label
     <input type="number" id="labSize" value="9.6" min="3" max="16" step="0.5"></label>
+  <div id="satPanel" style="display:none;border:1px solid #3a3a52;border-radius:7px;padding:8px;margin:8px 0">
+    <b style="font-size:12px">🛰 Satellite overlay</b>
+    <p style="margin:4px 0">Trace missing features (OSM is often incomplete).</p>
+    <button id="satLoad">Load / refresh imagery</button>
+    <label>opacity <input type="range" id="satOp" min="0" max="100" value="0" style="width:100%"></label>
+  </div>
   <div id="alignPanel" style="display:none;border:1px solid #3a3a52;border-radius:7px;padding:8px;margin:8px 0">
     <b style="font-size:12px">Align features to terrain</b>
     <p style="margin:4px 0">Nudge the course vectors onto the topography (rail
@@ -118,6 +125,7 @@ HTML = """<!DOCTYPE html>
 </div>
 <div id="wrap"><div id="stage">
   <img id="map" src="/map.png">
+  <img id="sat">
   <canvas id="cv"></canvas>
 </div></div>
 <script>
@@ -386,6 +394,8 @@ async function loadRegions(){
   if(d.exag!=null) document.getElementById('exagX').value=d.exag;
   window.regionKind=d.kind||'cribbage';
   document.getElementById('alignPanel').style.display = window.regionKind=='golf' ? 'block' : 'none';
+  document.getElementById('satPanel').style.display = window.regionKind=='golf' ? 'block' : 'none';
+  if(window.regionKind=='golf'){ document.getElementById('sat').src='/sat?'+Date.now(); }
   const ft=d.feature_transform||{};
   align={dx_m:ft.dx_m||0, dy_m:ft.dy_m||0,
          scale_x:ft.scale_x||ft.scale||1, scale_y:ft.scale_y||ft.scale||1, rot_deg:ft.rot_deg||0};
@@ -443,6 +453,13 @@ async function load(){ const r=await fetch('/waypoints'); const d=await r.json()
   document.getElementById('optStorage').checked=!!op.peg_storage;
   if(d.min_radius_mm) document.getElementById('radius').value=d.min_radius_mm;
   setMode(d.mode=='drawn'?'draw':'wp'); loadLabels(); }
+document.getElementById('satOp').oninput=e=>{ document.getElementById('sat').style.opacity=e.target.value/100; };
+document.getElementById('satLoad').onclick=async()=>{
+  status.textContent='fetching satellite imagery…';
+  const o=await (await fetch('/satellite',{method:'POST',body:'{}'})).json();
+  status.textContent=o.ok?'satellite loaded':'failed: '+o.log;
+  if(o.ok){ const s=document.getElementById('sat'); s.src='/sat?'+Date.now();
+    if(+document.getElementById('satOp').value===0){ document.getElementById('satOp').value=70; s.style.opacity=0.7; } } };
 document.getElementById('modeDraw').onclick=()=>setMode('draw');
 document.getElementById('modeWp').onclick=()=>setMode('wp');
 document.getElementById('modeCrop').onclick=()=>setMode('crop');
@@ -708,6 +725,13 @@ class H(BaseHTTPRequestHandler):
             self._png("route_prototype.png")
         elif self.path.startswith("/base.png"):
             self._png("basemap.png", fallback="route_prototype.png")
+        elif self.path.startswith("/sat"):
+            p = os.path.join(ROOT, f"data/sat_{_active()}.png")
+            if os.path.exists(p):
+                with open(p, "rb") as f:
+                    self._send(200, f.read(), "image/png")
+            else:
+                self._send(404, b"no satellite", "text/plain")
         elif self.path == "/waypoints":
             p = _wp_path()
             self._send(200, open(p).read() if os.path.exists(p) else '{"waypoints":[]}')
@@ -902,6 +926,14 @@ class H(BaseHTTPRequestHandler):
                 reg["exag"] = float(body["exag"])
             json.dump(cfg, open(os.path.join(ROOT, "data/regions.json"), "w"), indent=1)
             self._send(200, '{"ok":true}')
+        elif self.path == "/satellite":
+            if not run_lock.acquire(blocking=False):
+                self._send(409, json.dumps({"ok": False, "log": "busy"})); return
+            try:
+                ok, log = _run("scripts/fetch_satellite.py", timeout=200)
+                self._send(200, json.dumps({"ok": ok, "log": log}))
+            finally:
+                run_lock.release()
         elif self.path == "/fetch_names":
             if not run_lock.acquire(blocking=False):
                 self._send(409, json.dumps({"ok": False, "log": "a run is in progress"}))
