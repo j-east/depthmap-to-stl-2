@@ -80,6 +80,12 @@ for i, (name, _, _) in enumerate(TURF):
             td.polygon(pts, fill=idx)
 turf_lbl = np.array(turf_img)
 
+# fold in satellite-detected fairway (fwmask) where the board is still rough
+_fwp = f"data/fwmask_{ACTIVE}.png"
+if os.path.exists(_fwp):
+    fwm = np.array(Image.open(_fwp).resize((nxf, nyf), Image.NEAREST)) > 127
+    turf_lbl[fwm & (turf_lbl == 0)] = 1
+
 # path masks (lines)
 def path_mask(name, width_mm):
     im = Image.new("1", (nxf, nyf), 0)

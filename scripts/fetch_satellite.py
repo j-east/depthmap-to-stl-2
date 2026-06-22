@@ -23,15 +23,32 @@ w = max(los) - min(los); h = max(las) - min(las)
 lo0, lo1 = min(los) - w * pad, max(los) + w * pad
 la0, la1 = min(las) - h * pad, max(las) + h * pad
 
-# fetch Esri imagery for that axis-aligned bbox
+# aerial imagery for that axis-aligned bbox. USDA/USGS NAIP is public-domain
+# (commercial-use OK, US only); Esri World Imagery is a reference-only fallback
+# for areas NAIP doesn't cover (non-commercial use of that fallback).
 ew = int(min(2200, max(800, (lo1 - lo0) / (la1 - la0) * 1800)))
 eh = int(ew * (la1 - la0) / (lo1 - lo0))
-url = ("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export"
-       f"?bbox={lo0},{la0},{lo1},{la1}&bboxSR=4326&imageSR=4326&size={ew},{eh}"
-       f"&format=png&f=image")
-sat = np.array(Image.open(__import__("io").BytesIO(
-    urllib.request.urlopen(url, timeout=90).read())).convert("RGB"))
-print(f"{ACTIVE}: esri {ew}x{eh} over {lo1-lo0:.4f}x{la1-la0:.4f} deg")
+bb = f"bbox={lo0},{la0},{lo1},{la1}&bboxSR=4326&imageSR=4326&size={ew},{eh}&format=png&f=image"
+SOURCES = [
+    ("naip", "https://imagery.nationalmap.gov/arcgis/rest/services/USGSNAIPImagery/ImageServer/exportImage?" + bb),
+    ("esri", "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?" + bb),
+]
+sat, used = None, None
+for name, url in SOURCES:
+    try:
+        im = Image.open(__import__("io").BytesIO(
+            urllib.request.urlopen(url, timeout=90).read())).convert("RGB")
+        arr = np.array(im)
+        if arr.mean() < 6:        # NAIP returns ~black outside its coverage
+            print(f"{ACTIVE}: {name} appears empty (out of coverage), trying next")
+            continue
+        sat, used = arr, name
+        break
+    except Exception as e:
+        print(f"{ACTIVE}: {name} failed ({type(e).__name__})")
+if sat is None:
+    raise SystemExit("no aerial imagery available for this region")
+print(f"{ACTIVE}: {used} {ew}x{eh} over {lo1-lo0:.4f}x{la1-la0:.4f} deg")
 
 # resample into the board frame
 PR = max(BW, BH) / 1500.0

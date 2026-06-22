@@ -58,6 +58,14 @@ def to_px(lon, lat):
     x_mm, y_mm = FR["to_mm"](lon, lat)
     return float(x_mm) / PR, (BH - float(y_mm)) / PR
 
+# satellite-detected fairway, painted under the OSM polygons
+import os as _os
+_fwp = f"data/fwmask_{ACTIVE}.png"
+if _os.path.exists(_fwp):
+    fwm = np.array(Image.open(_fwp).resize((W, H), Image.NEAREST)) > 127
+    fimg = np.array(pim); fimg[fwm] = COLORS["fairway"]; pim = Image.fromarray(fimg)
+    draw = ImageDraw.Draw(pim, "RGBA")
+
 # semi-transparent turf so the hillshade (rail embankment, brook channel,
 # leveled green pads) reads through it for alignment
 TURF_A = 205

@@ -96,7 +96,13 @@ HTML = """<!DOCTYPE html>
     <p style="margin:4px 0">Trace missing features (OSM is often incomplete).</p>
     <button id="satLoad">Load / refresh imagery</button>
     <label>opacity <input type="range" id="satOp" min="0" max="100" value="0" style="width:100%"></label>
-    <button id="autofill">✚ Autofill missing fairways</button>
+    <hr style="border-color:#2e2e40">
+    <b style="font-size:12px">Detect fairways from satellite</b>
+    <p style="margin:4px 0">Tune what mown turf counts as fairway vs rough.</p>
+    <label>greenness <span id="gV">12</span><input type="range" id="fGmin" min="0" max="45" value="12" style="width:100%"></label>
+    <label>brightness <span id="vV">70</span><input type="range" id="fVmin" min="0" max="160" value="70" style="width:100%"></label>
+    <label>corridor width (m) <span id="cV">45</span><input type="range" id="fCorr" min="20" max="90" value="45" style="width:100%"></label>
+    <div class="row"><button class="primary" id="fDetect">Detect</button><button id="fClear">Clear</button></div>
     <hr style="border-color:#2e2e40">
     <b style="font-size:12px">Add a feature by hand</b>
     <select id="featType"><option>fairway</option><option>green</option><option>tee</option>
@@ -499,11 +505,17 @@ document.getElementById('featClear').onclick=async()=>{
   if(!confirm('Remove all hand-added features?'))return;
   await fetch('/feature/clear',{method:'POST',body:'{}'}); featPts=[];
   status.textContent='cleared'; img.src='/map.png?'+Date.now(); draw(); };
-document.getElementById('autofill').onclick=async()=>{
-  status.textContent='synthesizing fairways…';
-  const o=await (await fetch('/autofill',{method:'POST',body:'{}'})).json();
-  status.textContent=o.ok?o.log:'failed: '+o.log;
-  img.src='/map.png?'+Date.now(); };
+for(const [s,v] of [['fGmin','gV'],['fVmin','vV'],['fCorr','cV']])
+  document.getElementById(s).oninput=e=>{ document.getElementById(v).textContent=e.target.value; };
+document.getElementById('fDetect').onclick=async()=>{
+  status.textContent='detecting fairways from satellite…';
+  const o=await (await fetch('/detect_fairways',{method:'POST',body:JSON.stringify({
+    gmin:+document.getElementById('fGmin').value, vmin:+document.getElementById('fVmin').value,
+    corridor_m:+document.getElementById('fCorr').value})})).json();
+  status.textContent=o.ok?o.log:'failed: '+o.log; img.src='/map.png?'+Date.now(); };
+document.getElementById('fClear').onclick=async()=>{
+  await fetch('/detect_fairways',{method:'POST',body:JSON.stringify({clear:true})});
+  status.textContent='cleared detected fairways'; img.src='/map.png?'+Date.now(); };
 document.getElementById('satLoad').onclick=async()=>{
   status.textContent='fetching satellite imagery…';
   const o=await (await fetch('/satellite',{method:'POST',body:'{}'})).json();
@@ -1018,6 +1030,28 @@ class H(BaseHTTPRequestHandler):
                 if ok:
                     _save_thumb(act)
                 self._send(200, json.dumps({"ok": ok}))
+            finally:
+                run_lock.release()
+        elif self.path == "/detect_fairways":
+            act = _active()
+            if not run_lock.acquire(blocking=False):
+                self._send(409, json.dumps({"ok": False, "log": "busy"})); return
+            try:
+                if body.get("clear"):
+                    p = os.path.join(ROOT, f"data/fwmask_{act}.png")
+                    if os.path.exists(p):
+                        os.remove(p)
+                    ok, log = _run(_render_script())
+                elif not os.path.exists(os.path.join(ROOT, f"data/sat_{act}.png")):
+                    self._send(200, json.dumps({"ok": False, "log": "Load satellite first"})); return
+                else:
+                    gmin = body.get("gmin", 12); vmin = body.get("vmin", 70); corr = body.get("corridor_m", 45)
+                    ok, log = _run(f"scripts/detect_fairways.py {gmin} {vmin} {corr}", timeout=200)
+                    if ok:
+                        ok, _ = _run(_render_script())
+                if ok:
+                    _save_thumb(act)
+                self._send(200, json.dumps({"ok": ok, "log": log}))
             finally:
                 run_lock.release()
         elif self.path == "/autofill":
