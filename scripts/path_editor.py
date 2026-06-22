@@ -970,6 +970,7 @@ class H(BaseHTTPRequestHandler):
                    "base_mm": 8.0 if kind == "golf" else 10.0, "landmarks": []}
             if kind == "golf":
                 reg["board_rotation_deg"] = None  # auto-fit
+                reg["adjust_aspect"] = False       # exact bbox -> features align at identity
                 reg["feature_transform"] = {"dx_m": 0, "dy_m": 0, "scale_x": 1.0, "scale_y": 1.0, "rot_deg": 0}
             prev_active = cfg["active"]
             cfg["regions"][name] = reg; cfg["active"] = name
@@ -1154,7 +1155,7 @@ class H(BaseHTTPRequestHandler):
                 log = "\n".join((r.stdout + r.stderr).strip().splitlines()[-6:])
                 if r.returncode == 0:
                     _save_thumb(name)
-                self._send(200, json.dumps({"ok": True, "log": log,
+                self._send(200, json.dumps({"ok": r.returncode == 0, "log": log,
                                             "bbox": cfg["regions"][name]["bbox"]}))
             finally:
                 run_lock.release()

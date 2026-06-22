@@ -33,10 +33,15 @@ if reg["source"] in ("noaa", "usgs"):
         "noaa": "https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_all/ImageServer/exportImage",
         "usgs": "https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/exportImage",
     }
+    # adjustAspectRatio is per-region so seeded boards reproduce the exact DEM
+    # coverage they were calibrated against. Legacy boards default to true
+    # (the server default they were built with); fresh golf courses use false
+    # (exact bbox -> features align at identity).
+    adj = "false" if reg.get("adjust_aspect") is False else "true"
     params = urllib.parse.urlencode({
         "bbox": f"{minlon},{minlat},{maxlon},{maxlat}", "bboxSR": "4326", "imageSR": "4326",
         "size": f"{W},{H}", "format": "tiff", "pixelType": "F32",
-        "interpolation": "RSP_BilinearInterpolation", "adjustAspectRatio": "false",
+        "interpolation": "RSP_BilinearInterpolation", "adjustAspectRatio": adj,
         "f": "image"})
     print(f"{name}: {w_m/1000:.1f} x {h_m/1000:.1f} km -> {W}x{H} ({m_per_px:.1f} m/px) from {reg['source']}")
     urllib.request.urlretrieve(HOSTS[reg["source"]] + "?" + params, reg["src_file"])

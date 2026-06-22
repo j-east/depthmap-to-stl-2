@@ -142,7 +142,8 @@
     "vmin": 70.0,
     "vmax": 230,
     "corridor_m": 45.0
-   }
+   },
+   "adjust_aspect": false
   }
  }
 }
