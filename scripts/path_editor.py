@@ -748,7 +748,8 @@ def _ensure_dem(name):
     cfg = _regions_cfg(); reg = cfg["regions"].get(name, {})
     src = reg.get("src_file")
     if src and not os.path.exists(os.path.join(ROOT, src)):
-        _run(f"scripts/fetch_dem.py {name} 3000", timeout=600)
+        px = int(reg.get("src_px", 3000))   # fetch at the calibration resolution
+        _run(f"scripts/fetch_dem.py {name} {px}", timeout=600)
         if reg.get("kind") == "golf" and not os.path.exists(
                 os.path.join(ROOT, f"data/golf_{name}.json")):
             _run("scripts/fetch_golf.py")
@@ -965,7 +966,7 @@ class H(BaseHTTPRequestHandler):
                 self._send(400, json.dumps({"ok": False, "log": "bad or duplicate name"})); return
             bbox = body["bbox"]; kind = body.get("kind", "golf"); source = body.get("source", "usgs")
             reg = {"bbox": bbox, "source": source, "src_file": f"data/dem_{name}.tif",
-                   "src_m_per_px": None, "datum_m": 0, "kind": kind,
+                   "src_m_per_px": None, "datum_m": 0, "kind": kind, "src_px": 3000,
                    "exag": 4.0 if kind == "golf" else 5.0,
                    "base_mm": 8.0 if kind == "golf" else 10.0, "landmarks": []}
             if kind == "golf":
