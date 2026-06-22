@@ -1,0 +1,20 @@
+.git
+.pydeps
+node_modules
+dist
+src
+public
+*.md
+scripts/__pycache__
+# heavy, regenerable on the server (fetched on first use, cached on the volume)
+data/*.tif
+data/sat_*.png
+data/*.stl
+data/board_*.3mf
+data/route_prototype.png
+data/basemap.png
+data/board_preview.png
+data/framing_*.png
+data/*_zoom*.png
+data/golf_3d.png
+data/board_3d_*.png

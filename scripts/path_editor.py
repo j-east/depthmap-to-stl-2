@@ -11,11 +11,13 @@ refreshes the map.
 
 Run: python3 scripts/path_editor.py   ->  http://localhost:8765
 """
-import json, os, subprocess, threading
+import base64, json, os, subprocess, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PORT = 8765
+PORT = int(os.environ.get("PORT", "8765"))
+HOST = os.environ.get("HOST", "127.0.0.1")
+APP_PASSWORD = os.environ.get("APP_PASSWORD", "")   # if set, gate the whole app
 # region config (must match route_prototype.py)
 _reg = {"bbox": [-68.95, 43.98, -68.44, 44.36]}
 try:
@@ -552,7 +554,8 @@ document.getElementById('build').onclick = async ()=>{
   status.textContent='building 3MF… (1-2 min)';
   const r=await fetch('/build',{method:'POST',body:'{}'});
   const out=await r.json();
-  status.textContent=out.ok ? out.log+'\\nopened in Bambu Studio' : 'FAILED:\\n'+out.log; };
+  if(out.ok){ status.textContent='built → downloading 3MF'; window.location=out.download; }
+  else status.textContent='FAILED:\\n'+out.log; };
 document.getElementById('route').onclick = async ()=>{
   status.textContent='routing… (1-2 min)';
   const r=await fetch('/run',{method:'POST',body:payload()});
@@ -648,7 +651,8 @@ async function openP(n){ S.textContent='opening '+n+'…';
 async function build(n){ S.textContent='building '+n+'… (1-2 min)';
   await fetch('/region',{method:'POST',body:JSON.stringify({name:n})});
   const o=await (await fetch('/build',{method:'POST',body:'{}'})).json();
-  S.textContent=o.ok?'built '+n+' → opened in Bambu':'build failed: '+o.log; load(); }
+  if(o.ok){ S.textContent='built '+n+' → downloading 3MF'; window.location=o.download; }
+  else S.textContent='build failed: '+o.log; load(); }
 async function dup(n){ const nn=prompt('Duplicate "'+n+'" as:',n+'-copy'); if(!nn)return;
   const o=await (await fetch('/project/duplicate',{method:'POST',body:JSON.stringify({name:n,newname:nn})})).json();
   S.textContent=o.ok?'duplicated':'failed: '+o.log; load(); }
@@ -738,6 +742,17 @@ def _run(script, timeout=900):
                        capture_output=True, text=True, timeout=timeout)
     return r.returncode == 0, "\n".join((r.stdout + r.stderr).strip().splitlines()[-6:])
 
+def _ensure_dem(name):
+    """Fetch terrain (and golf features) the first time a seeded project is used
+    on a fresh deploy — DEMs are too large to ship in the image."""
+    cfg = _regions_cfg(); reg = cfg["regions"].get(name, {})
+    src = reg.get("src_file")
+    if src and not os.path.exists(os.path.join(ROOT, src)):
+        _run(f"scripts/fetch_dem.py {name} 3000", timeout=600)
+        if reg.get("kind") == "golf" and not os.path.exists(
+                os.path.join(ROOT, f"data/golf_{name}.json")):
+            _run("scripts/fetch_golf.py")
+
 
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
@@ -757,7 +772,25 @@ class H(BaseHTTPRequestHandler):
         with open(p, "rb") as f:
             self._send(200, f.read(), "image/png")
 
+    def _auth_ok(self):
+        if not APP_PASSWORD:
+            return True
+        h = self.headers.get("Authorization", "")
+        if h.startswith("Basic "):
+            try:
+                _, pw = base64.b64decode(h[6:]).decode().split(":", 1)
+                if pw == APP_PASSWORD:
+                    return True
+            except Exception:
+                pass
+        self.send_response(401)
+        self.send_header("WWW-Authenticate", 'Basic realm="Terrain Boards"')
+        self.end_headers()
+        return False
+
     def do_GET(self):
+        if not self._auth_ok():
+            return
         if self.path == "/":
             self._send(200, DASH_HTML, "text/html")
         elif self.path == "/editor":
@@ -794,6 +827,20 @@ class H(BaseHTTPRequestHandler):
                     self._send(200, f.read(), "image/png")
             else:
                 self._send(404, b"no satellite", "text/plain")
+        elif self.path.startswith("/download"):
+            act = _active()
+            p = os.path.join(ROOT, f"data/board_{act}.3mf")
+            if os.path.exists(p):
+                with open(p, "rb") as f:
+                    data = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "model/3mf")
+                self.send_header("Content-Disposition", f'attachment; filename="{act}.3mf"')
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            else:
+                self._send(404, b"no build yet - Build first", "text/plain")
         elif self.path == "/waypoints":
             p = _wp_path()
             self._send(200, open(p).read() if os.path.exists(p) else '{"waypoints":[]}')
@@ -855,6 +902,8 @@ class H(BaseHTTPRequestHandler):
             self._send(404, "{}")
 
     def do_POST(self):
+        if not self._auth_ok():
+            return
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         path = _wp_path()
         if self.path == "/waypoints":
@@ -964,6 +1013,7 @@ class H(BaseHTTPRequestHandler):
                 self._send(409, json.dumps({"ok": False, "log": "a run is already in progress"}))
                 return
             try:
+                _ensure_dem(act)
                 env = dict(os.environ, PYTHONPATH=".pydeps")
                 r = subprocess.run(["python3", _build_script()], cwd=ROOT, env=env,
                                    capture_output=True, text=True, timeout=900)
@@ -971,8 +1021,10 @@ class H(BaseHTTPRequestHandler):
                 ok = r.returncode == 0
                 if ok:
                     _save_thumb(act)
-                    subprocess.run(["open", os.path.join(ROOT, f"data/board_{act}.3mf")])
-                self._send(200, json.dumps({"ok": ok, "log": log}))
+                    import sys as _sys
+                    if _sys.platform == "darwin":   # local dev: open in Bambu Studio
+                        subprocess.run(["open", os.path.join(ROOT, f"data/board_{act}.3mf")])
+                self._send(200, json.dumps({"ok": ok, "log": log, "download": "/download"}))
             finally:
                 run_lock.release()
         elif self.path == "/align":
@@ -1089,6 +1141,7 @@ class H(BaseHTTPRequestHandler):
                                             "bbox": cfg["regions"][name]["bbox"]}))
                 return
             try:
+                _ensure_dem(name)
                 env = dict(os.environ, PYTHONPATH=".pydeps")
                 r = subprocess.run(["python3", _render_script()], cwd=ROOT, env=env,
                                    capture_output=True, text=True, timeout=900)
@@ -1105,6 +1158,7 @@ class H(BaseHTTPRequestHandler):
                 return
             try:
                 json.dump(body, open(path, "w"), indent=1)
+                _ensure_dem(_active())
                 env = dict(os.environ, PYTHONPATH=".pydeps")
                 r = subprocess.run(["python3", _render_script()], cwd=ROOT, env=env,
                                    capture_output=True, text=True, timeout=900)
@@ -1119,5 +1173,5 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(f"course editor: http://localhost:{PORT}")
-    ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
+    print(f"terrain boards: http://{HOST}:{PORT}  (auth {'on' if APP_PASSWORD else 'off'})")
+    ThreadingHTTPServer((HOST, PORT), H).serve_forever()
