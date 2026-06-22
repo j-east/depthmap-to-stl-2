@@ -769,6 +769,9 @@ class H(BaseHTTPRequestHandler):
         p = os.path.join(ROOT, "data", name)
         if not os.path.exists(p) and fallback:
             p = os.path.join(ROOT, "data", fallback)
+        if not os.path.exists(p):
+            self._send(404, b"not rendered yet", "text/plain")
+            return
         with open(p, "rb") as f:
             self._send(200, f.read(), "image/png")
 
