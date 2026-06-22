@@ -18,6 +18,6 @@ EXPOSE 8765
 VOLUME ["/app/data"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
-  CMD curl -fsS -o /dev/null http://localhost:8765/projects || exit 1
+  CMD curl -fsS -o /dev/null http://localhost:8765/health || exit 1
 
 CMD ["python3", "scripts/path_editor.py"]

@@ -789,6 +789,9 @@ class H(BaseHTTPRequestHandler):
         return False
 
     def do_GET(self):
+        if self.path == "/health":          # unauthenticated, for the container healthcheck
+            self._send(200, b"ok", "text/plain")
+            return
         if not self._auth_ok():
             return
         if self.path == "/":
