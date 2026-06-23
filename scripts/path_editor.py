@@ -796,16 +796,6 @@ class H(BaseHTTPRequestHandler):
         if self.path == "/health":          # unauthenticated, for the container healthcheck
             self._send(200, b"ok", "text/plain")
             return
-        if self.path == "/debug":
-            d = os.path.join(ROOT, "data")
-            try:
-                files = sorted(os.listdir(d))
-            except Exception as e:
-                files = [f"listdir error: {e}"]
-            self._send(200, json.dumps({"ROOT": ROOT, "cwd": os.getcwd(),
-                "data_dir": d, "files": files,
-                "route_prototype_exists": os.path.exists(os.path.join(d, "route_prototype.png"))}))
-            return
         if not self._auth_ok():
             return
         if self.path == "/":
