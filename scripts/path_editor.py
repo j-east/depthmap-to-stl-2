@@ -418,6 +418,7 @@ document.getElementById('fetchNames').onclick=async()=>{
   setMode('labels'); };
 async function loadRegions(){
   const d=await (await fetch('/regions')).json();
+  window.activeRegion=d.active;
   const sel=document.getElementById('regionSel');
   sel.innerHTML=d.names.map(n=>'<option'+(n==d.active?' selected':'')+'>'+n+'</option>').join('');
   [MINLON,MINLAT,MAXLON,MAXLAT]=d.bbox;
@@ -562,9 +563,15 @@ document.getElementById('route').onclick = async ()=>{
   const out=await r.json();
   status.textContent=out.ok ? out.log : 'FAILED:\\n'+out.log;
   showingBase=false; img.src='/map.png?'+Date.now(); loadLabels(); };
-let first=true;
+let first=true, autoRendered=false;
 img.onload = ()=>{ imgW=img.naturalWidth; imgH=img.naturalHeight;
   cv.width=imgW; cv.height=imgH; if(first){ first=false; fit(); } draw(); };
+img.onerror = async ()=>{  // not rendered yet on this server: render it once
+  if(autoRendered) return; autoRendered=true;
+  status.textContent='rendering '+(window.activeRegion||'')+'… first load can take 1-2 min';
+  const o=await (await fetch('/region',{method:'POST',body:JSON.stringify({name:window.activeRegion})})).json();
+  status.textContent=o.ok?'rendered':'render failed: '+(o.log||'').slice(-120);
+  img.src='/map.png?'+Date.now(); };
 (async()=>{ await loadRegions(); await load(); })();
 </script></body></html>"""
 
@@ -647,7 +654,7 @@ async function load(){
   S.textContent=d.projects.length+' projects';
 }
 async function openP(n){ S.textContent='opening '+n+'…';
-  await fetch('/region',{method:'POST',body:JSON.stringify({name:n})}); location='/editor'; }
+  await fetch('/setactive',{method:'POST',body:JSON.stringify({name:n})}); location='/editor'; }
 async function build(n){ S.textContent='building '+n+'… (1-2 min)';
   await fetch('/region',{method:'POST',body:JSON.stringify({name:n})});
   const o=await (await fetch('/build',{method:'POST',body:'{}'})).json();
@@ -1064,6 +1071,13 @@ class H(BaseHTTPRequestHandler):
                 reg["exag"] = float(body["exag"])
             json.dump(cfg, open(os.path.join(ROOT, "data/regions.json"), "w"), indent=1)
             self._send(200, '{"ok":true}')
+        elif self.path == "/setactive":
+            cfg = _regions_cfg(); name = body.get("name")
+            if name not in cfg["regions"]:
+                self._send(400, json.dumps({"ok": False})); return
+            cfg["active"] = name
+            json.dump(cfg, open(os.path.join(ROOT, "data/regions.json"), "w"), indent=1)
+            self._send(200, json.dumps({"ok": True}))
         elif self.path == "/satellite":
             if not run_lock.acquire(blocking=False):
                 self._send(409, json.dumps({"ok": False, "log": "busy"})); return
