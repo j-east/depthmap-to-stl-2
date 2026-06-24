@@ -568,8 +568,8 @@ img.onload = ()=>{ imgW=img.naturalWidth; imgH=img.naturalHeight;
   cv.width=imgW; cv.height=imgH; if(first){ first=false; fit(); } draw(); };
 img.onerror = async ()=>{  // not rendered yet on this server: render it once
   if(autoRendered) return; autoRendered=true;
-  status.textContent='rendering '+(window.activeRegion||'')+'… first load can take 1-2 min';
-  const o=await (await fetch('/region',{method:'POST',body:JSON.stringify({name:window.activeRegion})})).json();
+  status.textContent='rendering… first load can take 1-2 min';
+  const o=await (await fetch('/render',{method:'POST',body:'{}'})).json();
   status.textContent=o.ok?'rendered':'render failed: '+(o.log||'').slice(-120);
   img.src='/map.png?'+Date.now(); };
 (async()=>{ await loadRegions(); await load(); })();
@@ -1072,6 +1072,21 @@ class H(BaseHTTPRequestHandler):
                 reg["exag"] = float(body["exag"])
             json.dump(cfg, open(os.path.join(ROOT, "data/regions.json"), "w"), indent=1)
             self._send(200, '{"ok":true}')
+        elif self.path == "/render":   # render the active region (no body); for auto-render
+            act = _active()
+            if not run_lock.acquire(blocking=False):
+                self._send(409, json.dumps({"ok": False, "log": "busy"})); return
+            try:
+                _ensure_dem(act)
+                env = dict(os.environ, PYTHONPATH=".pydeps")
+                r = subprocess.run(["python3", _render_script()], cwd=ROOT, env=env,
+                                   capture_output=True, text=True, timeout=900)
+                log = "\n".join((r.stdout + r.stderr).strip().splitlines()[-6:])
+                if r.returncode == 0:
+                    _save_thumb(act)
+                self._send(200, json.dumps({"ok": r.returncode == 0, "log": log}))
+            finally:
+                run_lock.release()
         elif self.path == "/setactive":
             cfg = _regions_cfg(); name = body.get("name")
             if name not in cfg["regions"]:
