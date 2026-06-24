@@ -831,9 +831,10 @@ class H(BaseHTTPRequestHandler):
             q = parse_qs(urlparse(self.path).query).get("q", [""])[0]
             self._send(200, json.dumps(_geocode(q)))
         elif self.path.startswith("/map.png"):
-            self._png("route_prototype.png")
+            # per-region map; 404 (not the stale shared file) triggers auto-render
+            self._png(f"preview_{_active()}.png")
         elif self.path.startswith("/base.png"):
-            self._png("basemap.png", fallback="route_prototype.png")
+            self._png(f"preview_{_active()}.png")
         elif self.path.startswith("/sat"):
             p = os.path.join(ROOT, f"data/sat_{_active()}.png")
             if os.path.exists(p):
