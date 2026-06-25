@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Terrain Boards — golf (client-side)</title>
+<style>
+  body{margin:0;background:#11151a;color:#dde;font:14px -apple-system,sans-serif;display:flex;height:100vh}
+  #side{width:300px;padding:18px;flex-shrink:0;overflow:auto}
+  h1{font-size:16px;color:#fff} button{background:#2563eb;color:#fff;border:0;border-radius:7px;padding:10px 14px;font-size:14px;cursor:pointer}
+  button:disabled{background:#33415a;cursor:default}
+  label{display:block;margin:10px 0 3px;color:#9a9ab0;font-size:12px}
+  input{width:100%;box-sizing:border-box;background:#22222e;color:#eee;border:1px solid #3a3a52;border-radius:5px;padding:6px}
+  #log{margin-top:14px;font:12px ui-monospace,monospace;white-space:pre-wrap;color:#9fd}
+  #view{flex:1;position:relative} #dl{display:none;margin-top:12px} #dl a{color:#7dd3fc}
+</style></head><body>
+<div id="side">
+  <h1>⛳ Golf board — client-side</h1>
+  <p style="color:#9a9ab0;font-size:12px">Terrain + OSM turf + multicolor 3MF, all in your browser.</p>
+  <label>bbox  W, S, E, N</label><input id="bb" value="-71.1596, 42.30755, -71.1417, 42.31945">
+  <label>vertical exaggeration</label><input id="ex" value="4.0">
+  <button id="go" disabled>Loading Pyodide…</button>
+  <div id="dl"><a id="dla" download="golf.3mf">⬇ download 3MF</a></div>
+  <div id="log"></div>
+</div>
+<div id="view"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/pyodide/v0.26.2/full/pyodide.js"></script>
+<script>
+const log=(m)=>{document.getElementById('log').textContent+=m+"\n";console.log(m);};
+const t=()=>performance.now();
+let renderer,scene,camera,controls,group;
+function initView(){
+  const el=document.getElementById('view');
+  renderer=new THREE.WebGLRenderer({antialias:true}); renderer.setSize(el.clientWidth,el.clientHeight);
+  el.appendChild(renderer.domElement);
+  scene=new THREE.Scene(); scene.background=new THREE.Color(0x11151a);
+  camera=new THREE.PerspectiveCamera(45,el.clientWidth/el.clientHeight,0.1,5000);
+  camera.position.set(120,-200,170);
+  controls=new THREE.OrbitControls(camera,renderer.domElement);
+  scene.add(new THREE.HemisphereLight(0xffffff,0x223,0.75));
+  const d=new THREE.DirectionalLight(0xffffff,0.75); d.position.set(-1,-1,2); scene.add(d);
+  (function loop(){requestAnimationFrame(loop);controls.update();renderer.render(scene,camera);})();
+}
+function showObjects(objs){
+  if(group){scene.remove(group);} group=new THREE.Group();
+  objs.forEach(o=>{
+    const verts=new Float32Array(o.get('verts').buffer), tris=new Uint32Array(o.get('tris').buffer);
+    const g=new THREE.BufferGeometry();
+    g.setAttribute('position',new THREE.BufferAttribute(verts,3));
+    g.setIndex(new THREE.BufferAttribute(tris,1)); g.computeVertexNormals();
+    group.add(new THREE.Mesh(g,new THREE.MeshStandardMaterial({color:new THREE.Color(o.get('color')),roughness:0.92,side:THREE.DoubleSide})));
+  });
+  const box=new THREE.Box3().setFromObject(group), c=box.getCenter(new THREE.Vector3());
+  group.position.set(-c.x,-c.y,-c.z); scene.add(group);
+}
+
+// ---- USGS 3DEP 1m DEM (float TIFF, CORS-open) — primary, US ----
+async function fetchDEM3DEP(w,s,e,n){
+  const clat=(s+n)/2*Math.PI/180, Wm=(e-w)*111320*Math.cos(clat), Hm=(n-s)*111320, LONG=1600;
+  let W,H; if(Wm>=Hm){W=LONG;H=Math.max(2,Math.round(LONG*Hm/Wm));}else{H=LONG;W=Math.max(2,Math.round(LONG*Wm/Hm));}
+  const url=`https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/exportImage`
+    +`?bbox=${w},${s},${e},${n}&bboxSR=4326&imageSR=4326&size=${W},${H}`
+    +`&format=tiff&pixelType=F32&interpolation=RSP_BilinearInterpolation&adjustAspectRatio=false&f=image`;
+  const r=await fetch(url); if(!r.ok) throw new Error('3DEP HTTP '+r.status);
+  return {mode:'tiff', bytes:new Uint8Array(await r.arrayBuffer()), W, H};
+}
+// ---- terrarium fallback (global, ~10m) ----
+function merc(lon,lat,z){const nn=2**z;return [(lon+180)/360*nn,(1-Math.asinh(Math.tan(lat*Math.PI/180))/Math.PI)/2*nn];}
+function tile(z,x,y){return new Promise((res,rej)=>{const im=new Image();im.crossOrigin='anonymous';
+  im.onload=()=>res(im);im.onerror=()=>rej(new Error('tile '+z+'/'+x+'/'+y));
+  im.src=`https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;});}
+async function fetchTerrarium(w,s,e,n){
+  let z=16; for(;z>=10;z--){const a=merc(w,n,z),b=merc(e,s,z);
+    if(Math.max((b[0]-a[0])*256,(b[1]-a[1])*256)<=900)break;}
+  const a=merc(w,n,z),b=merc(e,s,z);
+  const tx0=Math.floor(a[0]),ty0=Math.floor(a[1]),tx1=Math.floor(b[0]),ty1=Math.floor(b[1]);
+  const cv=document.createElement('canvas'); cv.width=(tx1-tx0+1)*256; cv.height=(ty1-ty0+1)*256;
+  const ctx=cv.getContext('2d'); const jobs=[];
+  for(let tx=tx0;tx<=tx1;tx++)for(let ty=ty0;ty<=ty1;ty++)jobs.push([tx,ty]);
+  await Promise.all(jobs.map(async([tx,ty])=>{ctx.drawImage(await tile(z,tx,ty),(tx-tx0)*256,(ty-ty0)*256);}));
+  const sx=Math.round((a[0]-tx0)*256),sy=Math.round((a[1]-ty0)*256);
+  const sw=Math.max(2,Math.round((b[0]-a[0])*256)),sh=Math.max(2,Math.round((b[1]-a[1])*256));
+  const d=ctx.getImageData(sx,sy,sw,sh).data; const elev=new Float32Array(sw*sh);
+  for(let i=0;i<sw*sh;i++)elev[i]=(d[i*4]*256+d[i*4+1]+d[i*4+2]/256)-32768;
+  return {mode:'arr', elev, nrows:sh, ncols:sw};
+}
+async function fetchDEM(w,s,e,n){
+  try{ return await fetchDEM3DEP(w,s,e,n); }
+  catch(err){ log("3DEP unavailable ("+err.message+"), falling back to terrarium"); return await fetchTerrarium(w,s,e,n); }
+}
+// ---- OSM golf features (Overpass, CORS-open) ----
+const LAYER={fairway:'fairway',tee:'tee',green:'green',bunker:'bunker',water_hazard:'water',lateral_water_hazard:'water'};
+async function fetchGolf(w,s,e,n){
+  const q=`[out:json][timeout:40];way["golf"](${s},${w},${n},${e});out geom;`;
+  const r=await fetch('https://overpass-api.de/api/interpreter',{method:'POST',body:'data='+encodeURIComponent(q)});
+  const j=await r.json(); const f={};
+  for(const el of (j.elements||[])){const L=LAYER[el.tags&&el.tags.golf]; if(!L||!el.geometry)continue;
+    (f[L]=f[L]||[]).push(el.geometry.map(p=>[p.lon,p.lat]));}
+  return f;
+}
+
+let pyodide;
+(async()=>{
+  initView();
+  let s=t(); log("loading Pyodide + numpy + Pillow…");
+  pyodide=await loadPyodide(); await pyodide.loadPackage(["numpy","pillow"]);
+  pyodide.runPython(await (await fetch('board_lib.py')).text());
+  log("ready ("+((t()-s)/1000).toFixed(1)+"s)");
+  const b=document.getElementById('go'); b.disabled=false; b.textContent="Generate golf board";
+})();
+
+document.getElementById('go').onclick=async()=>{
+  const btn=document.getElementById('go'); btn.disabled=true; btn.textContent="working…";
+  try{
+    const [w,s,e,n]=document.getElementById('bb').value.split(',').map(Number);
+    const ex=parseFloat(document.getElementById('ex').value);
+    let s0=t(); log("fetching terrain + OSM golf…");
+    const [dem,feats]=await Promise.all([fetchDEM(w,s,e,n), fetchGolf(w,s,e,n)]);
+    const counts=Object.fromEntries(Object.entries(feats).map(([k,v])=>[k,v.length]));
+    const dims = dem.mode==='tiff' ? dem.W+"x"+dem.H+" 3DEP/1m" : dem.ncols+"x"+dem.nrows+" terrarium";
+    log("DEM "+dims+", turf "+JSON.stringify(counts)+" ("+((t()-s0)/1000).toFixed(1)+"s)");
+    s0=t(); log("building colored board in Pyodide…");
+    pyodide.globals.set('feats_json',JSON.stringify(feats));
+    let res;
+    if(dem.mode==='tiff'){
+      pyodide.globals.set('dem_bytes',dem.bytes);
+      res=pyodide.runPython(`golf_board(dem_bytes, 0, 0, [${w},${s},${e},${n}], feats_json, ${ex})`);
+    }else{
+      pyodide.globals.set('elev_js',dem.elev);
+      res=pyodide.runPython(`golf_board(elev_js, ${dem.nrows}, ${dem.ncols}, [${w},${s},${e},${n}], feats_json, ${ex})`);
+    }
+    const out=res.toJs(); res.destroy();
+    const objs=out.get('objects');
+    let tri=0; objs.forEach(o=>tri+=o.get('ntri'));
+    log("built "+objs.length+" objects, "+tri.toLocaleString()+" tris, board "+out.get('board').join("×")+" mm ("+((t()-s0)/1000).toFixed(1)+"s)");
+    s0=t(); showObjects(objs); log("WebGL render ("+((t()-s0)/1000).toFixed(2)+"s)");
+    const blob=new Blob([out.get('tmf')],{type:"model/3mf"});
+    document.getElementById('dla').href=URL.createObjectURL(blob);
+    document.getElementById('dl').style.display='block';
+    log("3MF: "+(out.get('tmf').length/1e6).toFixed(2)+" MB");
+  }catch(err){ log("ERROR: "+err.message); }
+  btn.disabled=false; btn.textContent="Generate golf board";
+};
+</script></body></html>

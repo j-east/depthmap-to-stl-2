@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir numpy scipy pillow matplotlib
 
 COPY scripts/ ./scripts/
 COPY data/ ./data/
+COPY web/ ./web/
 
 ENV HOST=0.0.0.0 PORT=8765 PYTHONUNBUFFERED=1 MPLBACKEND=Agg
 EXPOSE 8765

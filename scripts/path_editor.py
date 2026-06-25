@@ -803,6 +803,19 @@ class H(BaseHTTPRequestHandler):
         if self.path == "/health":          # unauthenticated, for the container healthcheck
             self._send(200, b"ok", "text/plain")
             return
+        # public client-side generator (all compute in the browser; no auth, no server work)
+        WEB = {"/play": ("golf.html", "text/html"), "/golf": ("golf.html", "text/html"),
+               "/proto": ("proto.html", "text/html"),
+               "/board_lib.py": ("board_lib.py", "text/plain; charset=utf-8")}
+        if self.path.split("?")[0] in WEB:
+            name, ctype = WEB[self.path.split("?")[0]]
+            p = os.path.join(ROOT, "web", name)
+            if os.path.exists(p):
+                with open(p, "rb") as f:
+                    self._send(200, f.read(), ctype)
+            else:
+                self._send(404, b"not found", "text/plain")
+            return
         if not self._auth_ok():
             return
         if self.path == "/":

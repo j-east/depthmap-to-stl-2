@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Terrain Boards — client-side (Pyodide) proof</title>
+<style>
+  body{margin:0;background:#11151a;color:#dde;font:14px -apple-system,sans-serif;display:flex;height:100vh}
+  #side{width:300px;padding:18px;flex-shrink:0}
+  h1{font-size:16px;color:#fff} button{background:#2563eb;color:#fff;border:0;border-radius:7px;padding:10px 14px;font-size:14px;cursor:pointer}
+  button:disabled{background:#33415a;cursor:default}
+  #log{margin-top:14px;font:12px ui-monospace,monospace;white-space:pre-wrap;color:#9fd}
+  label{display:block;margin:10px 0 3px;color:#9a9ab0;font-size:12px}
+  input{width:100%;background:#22222e;color:#eee;border:1px solid #3a3a52;border-radius:5px;padding:6px}
+  #view{flex:1;position:relative} #dl{display:none;margin-top:12px}
+  #dl a{color:#7dd3fc}
+</style></head><body>
+<div id="side">
+  <h1>🗺 Client-side proof</h1>
+  <p style="color:#9a9ab0;font-size:12px">DEM fetch + numpy/scipy mesh + 3MF + WebGL render, all in your browser. No server compute.</p>
+  <label>place (lat, lon)</label><input id="ll" value="46.8523, -121.7603">
+  <label>zoom (terrain detail)</label><input id="z" value="12">
+  <label>vertical exaggeration</label><input id="ex" value="1.0">
+  <button id="go" disabled>Loading Pyodide…</button>
+  <div id="dl"><a id="dla" download="terrain.3mf">⬇ download 3MF</a></div>
+  <div id="log"></div>
+</div>
+<div id="view"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/pyodide/v0.26.2/full/pyodide.js"></script>
+<script>
+const log=(m)=>{document.getElementById('log').textContent+=m+"\n";console.log(m);};
+const t=()=>performance.now();
+
+// ---- Three.js scene ----
+let renderer,scene,camera,controls,mesh;
+function initView(){
+  const el=document.getElementById('view');
+  renderer=new THREE.WebGLRenderer({antialias:true}); renderer.setSize(el.clientWidth,el.clientHeight);
+  el.appendChild(renderer.domElement);
+  scene=new THREE.Scene(); scene.background=new THREE.Color(0x11151a);
+  camera=new THREE.PerspectiveCamera(45,el.clientWidth/el.clientHeight,0.1,5000);
+  camera.position.set(150,-180,160);
+  controls=new THREE.OrbitControls(camera,renderer.domElement);
+  scene.add(new THREE.HemisphereLight(0xffffff,0x223,0.7));
+  const d=new THREE.DirectionalLight(0xffffff,0.8); d.position.set(-1,-1,2); scene.add(d);
+  (function loop(){requestAnimationFrame(loop);controls.update();renderer.render(scene,camera);})();
+}
+function showMesh(verts,faces){
+  if(mesh){scene.remove(mesh);mesh.geometry.dispose();}
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.BufferAttribute(verts,3));
+  g.setIndex(new THREE.BufferAttribute(faces,1));
+  g.computeVertexNormals(); g.computeBoundingBox();
+  const c=g.boundingBox.getCenter(new THREE.Vector3());
+  g.translate(-c.x,-c.y,-c.z);
+  mesh=new THREE.Mesh(g,new THREE.MeshStandardMaterial({color:0x6b9a52,roughness:0.9,side:THREE.DoubleSide}));
+  scene.add(mesh);
+}
+
+// ---- terrarium DEM fetch (CORS-open AWS open data) ----
+function lon2t(lon,z){return Math.floor((lon+180)/360*2**z);}
+function lat2t(lat,z){const r=lat*Math.PI/180;return Math.floor((1-Math.asinh(Math.tan(r))/Math.PI)/2*2**z);}
+function tile(z,x,y){return new Promise((res,rej)=>{
+  const im=new Image(); im.crossOrigin='anonymous';
+  im.onload=()=>res(im); im.onerror=()=>rej(new Error('tile '+z+'/'+x+'/'+y));
+  im.src=`https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;});}
+async function fetchDEM(lat,lon,z){
+  const cx=lon2t(lon,z), cy=lat2t(lat,z), R=1, span=2*R+1, S=256*span;
+  const cv=document.createElement('canvas'); cv.width=S; cv.height=S;
+  const ctx=cv.getContext('2d');
+  const tiles=[];
+  for(let dy=-R;dy<=R;dy++)for(let dx=-R;dx<=R;dx++)tiles.push([cx+dx,cy+dy,(dx+R)*256,(dy+R)*256]);
+  await Promise.all(tiles.map(async ([x,y,px,py])=>{ctx.drawImage(await tile(z,x,y),px,py);}));
+  const d=ctx.getImageData(0,0,S,S).data;
+  const elev=new Float32Array(S*S);
+  for(let i=0;i<S*S;i++){const r=d[i*4],g=d[i*4+1],b=d[i*4+2];elev[i]=(r*256+g+b/256)-32768;}
+  return {elev,n:S};
+}
+
+// ---- Python (numpy + scipy) mesh + 3MF builder, runs in Pyodide ----
+const PY=`
+import numpy as np
+from scipy import ndimage
+import io, zipfile
+
+def build_board(elev_js, n, exag):
+    a = np.asarray(elev_js.to_py(), dtype=np.float64).reshape(n, n)
+    a = ndimage.gaussian_filter(a, 1.5)            # scipy, in the browser
+    D = max(1, n // 220)                           # decimate to a printable mesh
+    a = a[::D, ::D]
+    ny, nx = a.shape
+    BOARD = 200.0; BASE = 4.0
+    mmpp = BOARD / max(nx, ny)
+    amin = float(a.min()); rng = float(a.max() - amin) or 1.0
+    z = (BASE + (a - amin) / rng * (60.0 * exag)).astype(np.float32)
+    xs = (np.arange(nx) * mmpp).astype(np.float32)
+    ys = (np.arange(ny) * mmpp).astype(np.float32)
+    X, Y = np.meshgrid(xs, ys)
+    N = nx * ny
+    top = np.stack([X, Y, z], -1).reshape(-1, 3)
+    bot = np.stack([X, Y, np.zeros_like(z)], -1).reshape(-1, 3)
+    V = np.concatenate([top, bot]).astype(np.float32)
+    idx = np.arange(N).reshape(ny, nx)
+    a00,a10,a11,a01 = idx[:-1,:-1].ravel(),idx[:-1,1:].ravel(),idx[1:,1:].ravel(),idx[1:,:-1].ravel()
+    tf = np.concatenate([np.stack([a00,a01,a11],1), np.stack([a00,a11,a10],1)])
+    b = idx + N
+    b00,b10,b11,b01 = b[:-1,:-1].ravel(),b[:-1,1:].ravel(),b[1:,1:].ravel(),b[1:,:-1].ravel()
+    bf = np.concatenate([np.stack([b00,b11,b01],1), np.stack([b00,b10,b11],1)])
+    faces = [tf, bf]
+    def wall(te, flip):
+        be = te + N; f = []
+        for i in range(len(te)-1):
+            if flip: f += [[te[i],te[i+1],be[i+1]],[te[i],be[i+1],be[i]]]
+            else:    f += [[te[i],be[i+1],te[i+1]],[te[i],be[i],be[i+1]]]
+        return np.array(f, np.int64)
+    faces += [wall(idx[0,:],True), wall(idx[-1,:],False), wall(idx[:,0],False), wall(idx[:,-1],True)]
+    F = np.concatenate(faces).astype(np.uint32)
+    vs = "".join('<vertex x="%.3f" y="%.3f" z="%.3f"/>' % (v[0],v[1],v[2]) for v in V)
+    ts = "".join('<triangle v1="%d" v2="%d" v3="%d"/>' % (f[0],f[1],f[2]) for f in F)
+    model = ('<?xml version="1.0" encoding="UTF-8"?>'
+      '<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">'
+      '<resources><object id="1" type="model"><mesh><vertices>'+vs+'</vertices>'
+      '<triangles>'+ts+'</triangles></mesh></object></resources>'
+      '<build><item objectid="1"/></build></model>')
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>')
+        zf.writestr("_rels/.rels", '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel-1" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>')
+        zf.writestr("3D/3dmodel.model", model)
+    return {"verts": V.tobytes(), "faces": F.tobytes(), "tmf": buf.getvalue(), "ntri": int(len(F))}
+`;
+
+let pyodide;
+(async()=>{
+  initView();
+  let s=t(); log("loading Pyodide…");
+  pyodide=await loadPyodide();
+  await pyodide.loadPackage(["numpy","scipy"]);
+  pyodide.runPython(PY);
+  log("Pyodide + numpy + scipy ready ("+((t()-s)/1000).toFixed(1)+"s)");
+  document.getElementById('go').disabled=false;
+  document.getElementById('go').textContent="Generate board";
+})();
+
+document.getElementById('go').onclick=async()=>{
+  const btn=document.getElementById('go'); btn.disabled=true; btn.textContent="working…";
+  try{
+    const [lat,lon]=document.getElementById('ll').value.split(',').map(Number);
+    const z=parseInt(document.getElementById('z').value), ex=parseFloat(document.getElementById('ex').value);
+    let s=t(); log("fetching DEM tiles…");
+    const {elev,n}=await fetchDEM(lat,lon,z);
+    log("DEM "+n+"x"+n+" fetched ("+((t()-s)/1000).toFixed(1)+"s)");
+    s=t(); log("building mesh + 3MF in Pyodide…");
+    pyodide.globals.set("elev_js", elev);
+    const res=pyodide.runPython("build_board(elev_js, "+n+", "+ex+")");
+    const m=res.toJs(); res.destroy();
+    const verts=new Float32Array(m.get('verts').buffer);
+    const faces=new Uint32Array(m.get('faces').buffer);
+    const tmf=m.get('tmf');
+    log("built "+m.get('ntri').toLocaleString()+" triangles ("+((t()-s)/1000).toFixed(1)+"s)");
+    s=t(); showMesh(verts,faces); log("WebGL render ("+((t()-s)/1000).toFixed(2)+"s)");
+    const blob=new Blob([tmf],{type:"model/3mf"});
+    document.getElementById('dla').href=URL.createObjectURL(blob);
+    document.getElementById('dl').style.display='block';
+    log("3MF ready: "+(tmf.length/1e6).toFixed(2)+" MB");
+  }catch(e){ log("ERROR: "+e.message); }
+  btn.disabled=false; btn.textContent="Generate board";
+};
+</script></body></html>
