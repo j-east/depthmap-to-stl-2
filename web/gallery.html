@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Terrain Maps — 3D-printable boards of any place</title>
+<style>
+  *{box-sizing:border-box} body{margin:0;background:#0d1015;color:#e7e7ef;font:15px -apple-system,system-ui,sans-serif}
+  a{color:inherit;text-decoration:none}
+  header{padding:14px 22px;display:flex;align-items:center;gap:16px;border-bottom:1px solid #1e2230;position:sticky;top:0;background:#0d1015cc;backdrop-filter:blur(8px);z-index:5}
+  .brand{font-weight:700;font-size:17px} .brand span{color:#6b9a52}
+  .search{flex:1;max-width:520px;display:flex;gap:8px}
+  .search input{flex:1;background:#181c26;border:1px solid #2a3040;color:#fff;border-radius:9px;padding:9px 12px;font-size:14px}
+  .btn{background:#2563eb;color:#fff;border:0;border-radius:9px;padding:9px 15px;font-size:14px;cursor:pointer;white-space:nowrap}
+  .btn.ghost{background:#1c2230;border:1px solid #2a3040}
+
+  /* ---- Featured (taller, framed, clearly its own band) ---- */
+  .featured{padding:26px 22px 30px;background:radial-gradient(120% 120% at 50% 0%,#161c28 0%,#0d1015 70%);border-bottom:1px solid #222a3a}
+  .eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#7fb98a;margin-bottom:10px}
+  .hero{position:relative;height:64vh;min-height:600px;border-radius:16px;overflow:hidden;background:#0f1319;
+        border:1px solid #28324a;box-shadow:0 18px 50px -20px #000,inset 0 0 0 1px #ffffff08}
+  #heroCanvas{width:100%;height:100%;display:block}
+  .hero .thumb{position:absolute;inset:0;background-size:cover;background-position:center;transition:opacity .5s}
+  .hero .info{position:absolute;left:22px;bottom:18px;text-shadow:0 2px 16px #000}
+  .hero .info h2{margin:2px 0 4px;font-size:28px} .hero .info .sub{color:#c7c7d6;font-size:14px}
+  .hero .cta{position:absolute;right:20px;bottom:18px;display:flex;gap:8px}
+  .hero .loading{position:absolute;top:14px;right:18px;font-size:12px;color:#8a94ad}
+
+  /* ---- Browse (distinct section) ---- */
+  .browse{max-width:1400px;margin:0 auto}
+  .browsehead{display:flex;align-items:center;gap:10px;padding:22px 22px 8px;flex-wrap:wrap}
+  .browsehead h3{margin:0;font-size:18px}
+  .tab{background:#161a24;border:1px solid #262c3b;color:#cfd;border-radius:20px;padding:6px 14px;cursor:pointer;font-size:13px}
+  .tab.on{background:#23314e;border-color:#2563eb;color:#fff}
+  .chip{background:#161a24;border:1px solid #262c3b;border-radius:20px;padding:6px 12px;cursor:pointer;font-size:13px;color:#9aa}
+  .chip.on{background:#1f2b22;border-color:#6b9a52;color:#cfe}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:18px;padding:10px 22px 70px}
+  .card{background:#141822;border:1px solid #232838;border-radius:12px;overflow:hidden;cursor:pointer;transition:transform .08s,border-color .08s}
+  .card:hover{transform:translateY(-2px);border-color:#3a455f}
+  .card .ph{aspect-ratio:4/3;background:linear-gradient(135deg,#1a2230,#222a18);display:flex;align-items:center;justify-content:center;color:#56607a;font-size:12px}
+  .card img{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;background:#11151a}
+  .card .m{padding:9px 11px} .card .m h3{margin:0;font-size:14px}
+  .card .m .p{color:#7a829a;font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .card .m .r{display:flex;align-items:center;justify-content:space-between;margin-top:8px}
+  .badge{font-size:11px;background:#1d2533;border-radius:6px;padding:2px 7px;color:#9fb}
+  .vote{display:flex;align-items:center;gap:5px;background:#1a1f2b;border:1px solid #2a3142;border-radius:8px;padding:4px 9px;font-size:13px;color:#cdd;cursor:pointer}
+  .vote.voted{background:#23314e;border-color:#2563eb;color:#fff}
+  .empty{padding:40px 22px;color:#7a829a}
+</style></head><body>
+<header>
+  <a class="brand" href="/">⛰ Terrain<span>Maps</span></a>
+  <form class="search" onsubmit="doSearch(event)">
+    <input id="q" placeholder="Search boards, or a place to create…" autocomplete="off">
+    <button class="btn" type="submit">Search</button>
+  </form>
+  <a class="btn ghost" href="/play">+ Create</a>
+</header>
+
+<section class="featured">
+  <div class="eyebrow" id="eyebrow">✦ Featured</div>
+  <div class="hero">
+    <div class="thumb" id="heroThumb"></div>
+    <canvas id="heroCanvas"></canvas>
+    <div class="loading" id="heroLoading">loading…</div>
+    <div class="info" id="heroInfo"></div>
+    <div class="cta" id="heroCta"></div>
+  </div>
+</section>
+
+<div class="browse">
+  <div class="browsehead">
+    <h3>Browse boards</h3>
+    <div class="tab on" data-sort="trending" onclick="setSort(this)">🔥 Trending</div>
+    <div class="tab" data-sort="top" onclick="setSort(this)">▲ Top</div>
+    <div class="tab" data-sort="new" onclick="setSort(this)">✦ New</div>
+    <span style="flex:1"></span>
+    <div class="chip on" data-type="" onclick="setType(this)">All</div>
+    <div class="chip" data-type="golf" onclick="setType(this)">⛳ Golf</div>
+  </div>
+  <div class="grid" id="grid"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+let VOTER=localStorage.getItem('voter'); if(!VOTER){VOTER=Math.random().toString(36).slice(2)+Date.now().toString(36);localStorage.setItem('voter',VOTER);}
+const VOTED=new Set(JSON.parse(localStorage.getItem('voted')||'[]'));
+let sort='trending', type='';
+const TYPE_BADGE={golf:'⛳ golf',cribbage:'cribbage',town:'🗺 town',skyline:'🏙 skyline'};
+const esc=s=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const api=async p=>{const r=await fetch(p);if(!r.ok)throw new Error(p+' '+r.status);return r.json();};
+
+async function load(){
+  let designs=[]; try{ designs=(await api(`/api/designs?sort=${sort}&type=${type}`)).designs; }catch(e){}
+  renderGrid(designs);
+  const feat=designs.find(d=>d.mesh)||null;     // featured = top board that has a precomputed mesh
+  renderHero(feat);
+}
+function renderGrid(designs){
+  const g=document.getElementById('grid');
+  if(!designs.length){ g.innerHTML='<div class="empty">No boards yet — be the first to <a href="/play" style="color:#7dd3fc">create one</a>.</div>'; return; }
+  g.innerHTML='';
+  designs.forEach(d=>{
+    const c=document.createElement('div'); c.className='card'; c.onclick=()=>location='/view?design='+d.id;
+    const thumb=d.thumb?`<img src="/thumb-design/${d.id}" loading="lazy">`:`<div class="ph">no preview</div>`;
+    c.innerHTML=thumb+`<div class="m"><h3>${esc(d.name)}</h3><div class="p">${esc(d.place||'')}</div>
+      <div class="r"><span class="badge">${TYPE_BADGE[d.type]||d.type}</span>
+      <span class="vote${VOTED.has(d.id)?' voted':''}" onclick="event.stopPropagation();vote('${d.id}',this)">▲ <b>${d.votes}</b></span></div></div>`;
+    g.appendChild(c);
+  });
+}
+function renderHero(d){
+  document.getElementById('eyebrow').textContent = d?'✦ Featured':'✦ Featured demo';
+  document.getElementById('heroInfo').innerHTML = d
+    ? `<h2>${esc(d.name)}</h2><div class="sub">${esc(d.place||'')} · ▲ ${d.votes}</div>`
+    : `<h2>The Country Club</h2><div class="sub">Brookline, MA · sample board</div>`;
+  document.getElementById('heroCta').innerHTML = d
+    ? `<a class="btn ghost" href="/view?design=${d.id}">Open</a> <a class="btn" href="/view?design=${d.id}">Order</a>`
+    : `<a class="btn" href="/play">Create your own →</a>`;
+  document.getElementById('heroThumb').style.backgroundImage = (d&&d.thumb)?`url(/thumb-design/${d.id})`:'';
+  loadHeroMesh(d ? '/mesh-design/'+d.id : '/featured-demo.mesh');
+}
+async function vote(id,el){
+  if(VOTED.has(id)) return;
+  try{ const r=await (await fetch(`/api/designs/${id}/vote`,{method:'POST',body:JSON.stringify({voter:VOTER})})).json();
+    el.querySelector('b').textContent=r.votes; el.classList.add('voted'); VOTED.add(id); localStorage.setItem('voted',JSON.stringify([...VOTED])); }catch(e){}
+}
+function setSort(t){ document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on')); t.classList.add('on'); sort=t.dataset.sort; load(); }
+function setType(t){ document.querySelectorAll('.chip').forEach(x=>x.classList.remove('on')); t.classList.add('on'); type=t.dataset.type; load(); }
+async function doSearch(ev){ ev.preventDefault(); const term=document.getElementById('q').value.trim();
+  let res=[]; try{ res=(await api('/api/designs?q='+encodeURIComponent(term))).designs; }catch(e){}
+  renderGrid(res); const g=document.getElementById('grid');
+  const create=document.createElement('div'); create.className='card'; create.style.cssText='display:flex;align-items:center;justify-content:center;min-height:160px;border-style:dashed';
+  create.innerHTML=`<div style="text-align:center"><div style="font-size:22px">+</div>Create “${esc(term)}”</div>`;
+  create.onclick=()=>location='/play?q='+encodeURIComponent(term); g.prepend(create);
+}
+
+// ---- precomputed-mesh hero (Three.js only; no Pyodide, no OSM) ----
+function unpackMesh(buf){
+  const dv=new DataView(buf), hlen=dv.getUint32(0,true);
+  const header=JSON.parse(new TextDecoder().decode(new Uint8Array(buf,4,hlen)));
+  let off=4+hlen; return header.objects.map(o=>{ const verts=buf.slice(off,off+o.v); off+=o.v; const tris=buf.slice(off,off+o.t); off+=o.t; return {color:o.color,verts,tris}; });
+}
+let renderer,scene,camera,controls,group;
+function initHero(){
+  const cv=document.getElementById('heroCanvas'), el=cv.parentElement;
+  renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:true});
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2)); renderer.setSize(el.clientWidth,el.clientHeight);
+  scene=new THREE.Scene();
+  camera=new THREE.PerspectiveCamera(42,el.clientWidth/el.clientHeight,0.1,5000); camera.up.set(0,0,1); camera.position.set(142,-270,210);
+  controls=new THREE.OrbitControls(camera,cv); controls.enableDamping=true; controls.autoRotate=true; controls.autoRotateSpeed=1.0; controls.enablePan=false;
+  scene.add(new THREE.HemisphereLight(0xffffff,0x223,0.85)); const d=new THREE.DirectionalLight(0xffffff,0.7); d.position.set(-1,-1,2); scene.add(d);
+  addEventListener('resize',()=>{renderer.setSize(el.clientWidth,el.clientHeight);camera.aspect=el.clientWidth/el.clientHeight;camera.updateProjectionMatrix();});
+  (function loop(){requestAnimationFrame(loop);if(controls)controls.update();renderer.render(scene,camera);})();
+}
+async function loadHeroMesh(url){
+  document.getElementById('heroLoading').style.display='block';
+  try{
+    const buf=await (await fetch(url)).arrayBuffer();
+    const g=new THREE.Group();
+    unpackMesh(buf).forEach(o=>{ const geo=new THREE.BufferGeometry();
+      geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(o.verts),3));
+      geo.setIndex(new THREE.BufferAttribute(new Uint32Array(o.tris),1)); geo.computeVertexNormals();
+      g.add(new THREE.Mesh(geo,new THREE.MeshStandardMaterial({color:new THREE.Color(o.color),roughness:0.92,side:THREE.DoubleSide})));});
+    const box=new THREE.Box3().setFromObject(g),c=box.getCenter(new THREE.Vector3()); g.position.set(-c.x,-c.y,-c.z);
+    if(group)scene.remove(group); group=g; scene.add(g);
+    document.getElementById('heroThumb').style.opacity='0';
+  }catch(e){ /* keep thumbnail */ }
+  document.getElementById('heroLoading').style.display='none';
+}
+initHero(); load();
+</script></body></html>

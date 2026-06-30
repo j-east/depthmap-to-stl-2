@@ -9,135 +9,187 @@
   input{width:100%;box-sizing:border-box;background:#22222e;color:#eee;border:1px solid #3a3a52;border-radius:5px;padding:6px}
   #log{margin-top:14px;font:12px ui-monospace,monospace;white-space:pre-wrap;color:#9fd}
   #view{flex:1;position:relative} #dl{display:none;margin-top:12px} #dl a{color:#7dd3fc}
+  #status{margin-top:10px;font-size:13px;min-height:18px;color:#9a9ab0}
+  .spin{display:inline-block;width:12px;height:12px;border:2px solid #3a3a52;border-top-color:#7dd3fc;
+        border-radius:50%;animation:sp .7s linear infinite;vertical-align:-1px;margin-right:6px}
+  @keyframes sp{to{transform:rotate(360deg)}}
 </style></head><body>
 <div id="side">
   <h1>⛳ Golf board — client-side</h1>
   <p style="color:#9a9ab0;font-size:12px">Terrain + OSM turf + multicolor 3MF, all in your browser.</p>
-  <label>bbox  W, S, E, N</label><input id="bb" value="-71.1596, 42.30755, -71.1417, 42.31945">
+  <label>search a golf course</label>
+  <input id="q" placeholder="e.g. Pebble Beach" onkeydown="if(event.key==='Enter')doSearch()">
+  <button id="searchBtn" onclick="doSearch()" style="margin-top:6px">Search</button>
+  <div id="results" style="margin-top:8px;max-height:240px;overflow:auto"></div>
+  <details style="margin-top:10px"><summary style="color:#9a9ab0;font-size:12px;cursor:pointer">advanced: bbox</summary>
+  <label>bbox  W, S, E, N</label><input id="bb" value="-71.1596, 42.30755, -71.1417, 42.31945"></details>
   <label>vertical exaggeration</label><input id="ex" value="4.0">
   <button id="go" disabled>Loading Pyodide…</button>
+  <div id="status"></div>
+  <label style="margin-top:8px"><input type="checkbox" id="spin" onchange="controls.autoRotate=this.checked"> auto-rotate</label>
   <div id="dl"><a id="dla" download="golf.3mf">⬇ download 3MF</a></div>
+  <button id="pub" style="margin-top:10px;background:#1f2b22;border:1px solid #6b9a52">↑ Publish to gallery</button>
   <div id="log"></div>
+  <div style="margin-top:14px"><a href="/" style="color:#7a7a90;font-size:12px">← back to gallery</a></div>
 </div>
 <div id="view"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-<script src="https://cdn.jsdelivr.net/pyodide/v0.26.2/full/pyodide.js"></script>
 <script>
 const log=(m)=>{document.getElementById('log').textContent+=m+"\n";console.log(m);};
-const t=()=>performance.now();
+const params=new URLSearchParams(location.search);
+let wantAutorun=!!params.get('bbox'), didAutorun=false, lastPlace=params.get('name')||'';
+function maybeAutorun(){ if(workerReady && wantAutorun && !didAutorun){ didAutorun=true; generate(); } }
+
+// ---- Three.js scene (always rendering; never blocked by the build) ----
 let renderer,scene,camera,controls,group;
 function initView(){
   const el=document.getElementById('view');
-  renderer=new THREE.WebGLRenderer({antialias:true}); renderer.setSize(el.clientWidth,el.clientHeight);
+  renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2)); renderer.setSize(el.clientWidth,el.clientHeight);
   el.appendChild(renderer.domElement);
   scene=new THREE.Scene(); scene.background=new THREE.Color(0x11151a);
   camera=new THREE.PerspectiveCamera(45,el.clientWidth/el.clientHeight,0.1,5000);
-  camera.position.set(120,-200,170);
+  camera.up.set(0,0,1); camera.position.set(120,-200,170);
   controls=new THREE.OrbitControls(camera,renderer.domElement);
+  controls.enableDamping=true; controls.dampingFactor=0.08; controls.autoRotateSpeed=1.2;
   scene.add(new THREE.HemisphereLight(0xffffff,0x223,0.75));
   const d=new THREE.DirectionalLight(0xffffff,0.75); d.position.set(-1,-1,2); scene.add(d);
+  addEventListener('resize',()=>{renderer.setSize(el.clientWidth,el.clientHeight);
+    camera.aspect=el.clientWidth/el.clientHeight; camera.updateProjectionMatrix();});
   (function loop(){requestAnimationFrame(loop);controls.update();renderer.render(scene,camera);})();
 }
 function showObjects(objs){
-  if(group){scene.remove(group);} group=new THREE.Group();
+  const g=new THREE.Group();
   objs.forEach(o=>{
-    const verts=new Float32Array(o.get('verts').buffer), tris=new Uint32Array(o.get('tris').buffer);
-    const g=new THREE.BufferGeometry();
-    g.setAttribute('position',new THREE.BufferAttribute(verts,3));
-    g.setIndex(new THREE.BufferAttribute(tris,1)); g.computeVertexNormals();
-    group.add(new THREE.Mesh(g,new THREE.MeshStandardMaterial({color:new THREE.Color(o.get('color')),roughness:0.92,side:THREE.DoubleSide})));
+    const geo=new THREE.BufferGeometry();
+    geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(o.verts),3));
+    geo.setIndex(new THREE.BufferAttribute(new Uint32Array(o.tris),1)); geo.computeVertexNormals();
+    g.add(new THREE.Mesh(geo,new THREE.MeshStandardMaterial({color:new THREE.Color(o.color),roughness:0.92,side:THREE.DoubleSide})));
   });
-  const box=new THREE.Box3().setFromObject(group), c=box.getCenter(new THREE.Vector3());
-  group.position.set(-c.x,-c.y,-c.z); scene.add(group);
+  const box=new THREE.Box3().setFromObject(g), c=box.getCenter(new THREE.Vector3());
+  g.position.set(-c.x,-c.y,-c.z);
+  const old=group; group=g; scene.add(g);          // add new, then drop old -> seamless swap
+  if(old){ scene.remove(old); old.traverse(o=>{if(o.geometry)o.geometry.dispose();}); }
 }
 
-// ---- USGS 3DEP 1m DEM (float TIFF, CORS-open) — primary, US ----
-async function fetchDEM3DEP(w,s,e,n){
-  const clat=(s+n)/2*Math.PI/180, Wm=(e-w)*111320*Math.cos(clat), Hm=(n-s)*111320, LONG=1600;
-  let W,H; if(Wm>=Hm){W=LONG;H=Math.max(2,Math.round(LONG*Hm/Wm));}else{H=LONG;W=Math.max(2,Math.round(LONG*Wm/Hm));}
-  const url=`https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/exportImage`
-    +`?bbox=${w},${s},${e},${n}&bboxSR=4326&imageSR=4326&size=${W},${H}`
-    +`&format=tiff&pixelType=F32&interpolation=RSP_BilinearInterpolation&adjustAspectRatio=false&f=image`;
-  const r=await fetch(url); if(!r.ok) throw new Error('3DEP HTTP '+r.status);
-  return {mode:'tiff', bytes:new Uint8Array(await r.arrayBuffer()), W, H};
+// ---- course search via Nominatim (main thread; fast) ----
+async function nominatim(q){
+  const url='https://nominatim.openstreetmap.org/search?format=jsonv2&limit=20&namedetails=1&q='+encodeURIComponent(q);
+  const r=await fetch(url,{headers:{'Accept':'application/json'}});
+  if(!r.ok) throw new Error('Nominatim HTTP '+r.status);
+  return await r.json();
 }
-// ---- terrarium fallback (global, ~10m) ----
-function merc(lon,lat,z){const nn=2**z;return [(lon+180)/360*nn,(1-Math.asinh(Math.tan(lat*Math.PI/180))/Math.PI)/2*nn];}
-function tile(z,x,y){return new Promise((res,rej)=>{const im=new Image();im.crossOrigin='anonymous';
-  im.onload=()=>res(im);im.onerror=()=>rej(new Error('tile '+z+'/'+x+'/'+y));
-  im.src=`https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;});}
-async function fetchTerrarium(w,s,e,n){
-  let z=16; for(;z>=10;z--){const a=merc(w,n,z),b=merc(e,s,z);
-    if(Math.max((b[0]-a[0])*256,(b[1]-a[1])*256)<=900)break;}
-  const a=merc(w,n,z),b=merc(e,s,z);
-  const tx0=Math.floor(a[0]),ty0=Math.floor(a[1]),tx1=Math.floor(b[0]),ty1=Math.floor(b[1]);
-  const cv=document.createElement('canvas'); cv.width=(tx1-tx0+1)*256; cv.height=(ty1-ty0+1)*256;
-  const ctx=cv.getContext('2d'); const jobs=[];
-  for(let tx=tx0;tx<=tx1;tx++)for(let ty=ty0;ty<=ty1;ty++)jobs.push([tx,ty]);
-  await Promise.all(jobs.map(async([tx,ty])=>{ctx.drawImage(await tile(z,tx,ty),(tx-tx0)*256,(ty-ty0)*256);}));
-  const sx=Math.round((a[0]-tx0)*256),sy=Math.round((a[1]-ty0)*256);
-  const sw=Math.max(2,Math.round((b[0]-a[0])*256)),sh=Math.max(2,Math.round((b[1]-a[1])*256));
-  const d=ctx.getImageData(sx,sy,sw,sh).data; const elev=new Float32Array(sw*sh);
-  for(let i=0;i<sw*sh;i++)elev[i]=(d[i*4]*256+d[i*4+1]+d[i*4+2]/256)-32768;
-  return {mode:'arr', elev, nrows:sh, ncols:sw};
+async function searchCourses(name){
+  let arr=await nominatim(name);
+  let golf=arr.filter(x=>x.type==='golf_course');
+  if(!golf.length && !/golf/i.test(name)){ arr=await nominatim(name+' golf course'); golf=arr.filter(x=>x.type==='golf_course'); }
+  const use=golf.length?golf:arr;
+  return use.map(x=>{ const bb=x.boundingbox.map(Number);
+    return {name:(x.namedetails&&x.namedetails.name)||x.display_name.split(',')[0], full:x.display_name,
+            isGolf:x.type==='golf_course', b:{minlat:bb[0],maxlat:bb[1],minlon:bb[2],maxlon:bb[3]}};});
 }
-async function fetchDEM(w,s,e,n){
-  try{ return await fetchDEM3DEP(w,s,e,n); }
-  catch(err){ log("3DEP unavailable ("+err.message+"), falling back to terrarium"); return await fetchTerrarium(w,s,e,n); }
-}
-// ---- OSM golf features (Overpass, CORS-open) ----
-const LAYER={fairway:'fairway',tee:'tee',green:'green',bunker:'bunker',water_hazard:'water',lateral_water_hazard:'water'};
-async function fetchGolf(w,s,e,n){
-  const q=`[out:json][timeout:40];way["golf"](${s},${w},${n},${e});out geom;`;
-  const r=await fetch('https://overpass-api.de/api/interpreter',{method:'POST',body:'data='+encodeURIComponent(q)});
-  const j=await r.json(); const f={};
-  for(const el of (j.elements||[])){const L=LAYER[el.tags&&el.tags.golf]; if(!L||!el.geometry)continue;
-    (f[L]=f[L]||[]).push(el.geometry.map(p=>[p.lon,p.lat]));}
-  return f;
-}
-
-let pyodide;
-(async()=>{
-  initView();
-  let s=t(); log("loading Pyodide + numpy + Pillow…");
-  pyodide=await loadPyodide(); await pyodide.loadPackage(["numpy","pillow"]);
-  pyodide.runPython(await (await fetch('board_lib.py')).text());
-  log("ready ("+((t()-s)/1000).toFixed(1)+"s)");
-  const b=document.getElementById('go'); b.disabled=false; b.textContent="Generate golf board";
-})();
-
-document.getElementById('go').onclick=async()=>{
-  const btn=document.getElementById('go'); btn.disabled=true; btn.textContent="working…";
+async function doSearch(){
+  const name=document.getElementById('q').value.trim(); if(!name) return;
+  const rd=document.getElementById('results'); rd.textContent='searching…';
   try{
-    const [w,s,e,n]=document.getElementById('bb').value.split(',').map(Number);
-    const ex=parseFloat(document.getElementById('ex').value);
-    let s0=t(); log("fetching terrain + OSM golf…");
-    const [dem,feats]=await Promise.all([fetchDEM(w,s,e,n), fetchGolf(w,s,e,n)]);
-    const counts=Object.fromEntries(Object.entries(feats).map(([k,v])=>[k,v.length]));
-    const dims = dem.mode==='tiff' ? dem.W+"x"+dem.H+" 3DEP/1m" : dem.ncols+"x"+dem.nrows+" terrarium";
-    log("DEM "+dims+", turf "+JSON.stringify(counts)+" ("+((t()-s0)/1000).toFixed(1)+"s)");
-    s0=t(); log("building colored board in Pyodide…");
-    pyodide.globals.set('feats_json',JSON.stringify(feats));
-    let res;
-    if(dem.mode==='tiff'){
-      pyodide.globals.set('dem_bytes',dem.bytes);
-      res=pyodide.runPython(`golf_board(dem_bytes, 0, 0, [${w},${s},${e},${n}], feats_json, ${ex})`);
-    }else{
-      pyodide.globals.set('elev_js',dem.elev);
-      res=pyodide.runPython(`golf_board(elev_js, ${dem.nrows}, ${dem.ncols}, [${w},${s},${e},${n}], feats_json, ${ex})`);
-    }
-    const out=res.toJs(); res.destroy();
-    const objs=out.get('objects');
-    let tri=0; objs.forEach(o=>tri+=o.get('ntri'));
-    log("built "+objs.length+" objects, "+tri.toLocaleString()+" tris, board "+out.get('board').join("×")+" mm ("+((t()-s0)/1000).toFixed(1)+"s)");
-    s0=t(); showObjects(objs); log("WebGL render ("+((t()-s0)/1000).toFixed(2)+"s)");
-    const blob=new Blob([out.get('tmf')],{type:"model/3mf"});
+    const list=await searchCourses(name);
+    if(!list.length){ rd.textContent='no matches for "'+name+'"'; return; }
+    rd.innerHTML='';
+    list.slice(0,25).forEach(c=>{
+      const where=c.full.split(',').slice(1,4).join(',').trim();
+      const tag=c.isGolf?'':' <span style="color:#c08">· area, not a mapped course</span>';
+      const el=document.createElement('div');
+      el.style.cssText='padding:7px 8px;margin:4px 0;background:#22222e;border:1px solid #33415a;border-radius:6px;cursor:pointer;font-size:13px';
+      el.innerHTML=`<b>${c.name}</b>${tag}<br><span style="color:#7a7a90;font-size:11px">${where}</span>`;
+      el.onclick=()=>pickCourse(c); rd.appendChild(el);
+    });
+    if(list.length>25) rd.appendChild(Object.assign(document.createElement('div'),{textContent:'…'+(list.length-25)+' more — refine the name',style:'color:#7a7a90;font-size:11px;margin-top:4px'}));
+  }catch(err){ rd.textContent='search failed: '+err.message; }
+}
+function pickCourse(c){
+  let {minlon,minlat,maxlon,maxlat}=c.b;
+  if(maxlat-minlat<0.004 || maxlon-minlon<0.004){
+    const cy=(minlat+maxlat)/2, cx=(minlon+maxlon)/2, dy=0.0075, dx=0.0075/Math.cos(cy*Math.PI/180);
+    minlat=cy-dy; maxlat=cy+dy; minlon=cx-dx; maxlon=cx+dx;
+  }
+  const px=(maxlon-minlon)*0.08, py=(maxlat-minlat)*0.08;
+  document.getElementById('bb').value=[minlon-px,minlat-py,maxlon+px,maxlat+py].map(v=>v.toFixed(6)).join(',');
+  document.querySelector('h1').textContent='⛳ '+c.name; lastPlace=c.full||c.name;
+  generate();
+}
+
+// ---- the build runs in a worker; the main thread stays free to render ----
+function setStatus(html,color){const s=document.getElementById('status');s.innerHTML=html;s.style.color=color||'#9a9ab0';}
+let workerReady=false, tStart=0, lastPreview=null;
+const worker=new Worker('worker.js');
+worker.onmessage=(ev)=>{
+  const m=ev.data;
+  if(m.type==='ready'){ workerReady=true; const b=document.getElementById('go'); b.disabled=false; b.textContent='Generate golf board';
+    setStatus('ready','#7a7a90'); maybeAutorun(); }
+  else if(m.type==='progress'){ setStatus('<span class="spin"></span>'+m.msg,'#9fd'); log(m.msg); }
+  else if(m.type==='error'){ setStatus('✕ '+m.msg,'#ff8a8a'); log('ERROR: '+m.msg); endBusy(); }
+  else if(m.type==='done'){
+    showObjects(m.objects);
+    lastPreview=m.preview||null;
+    const blob=new Blob([m.tmf],{type:'model/3mf'});
     document.getElementById('dla').href=URL.createObjectURL(blob);
     document.getElementById('dl').style.display='block';
-    log("3MF: "+(out.get('tmf').length/1e6).toFixed(2)+" MB");
-  }catch(err){ log("ERROR: "+err.message); }
-  btn.disabled=false; btn.textContent="Generate golf board";
+    let tri=0; m.objects.forEach(o=>tri+=o.ntri);
+    const secs=((performance.now()-tStart)/1000).toFixed(1);
+    setStatus('✓ done in '+secs+'s · '+tri.toLocaleString()+' tris','#7CFC9A');
+    log('built '+m.objects.length+' objects, '+tri.toLocaleString()+' tris, board '+m.board.join('×')+' mm — build '+(m.buildMs/1000).toFixed(1)+'s, total '+secs+'s');
+    endBusy();
+  }
 };
+function endBusy(){ const b=document.getElementById('go'); b.disabled=false; b.textContent='Generate golf board'; }
+function generate(){
+  if(!workerReady) return;
+  const [w,s,e,n]=document.getElementById('bb').value.split(',').map(Number);
+  const ex=parseFloat(document.getElementById('ex').value);
+  const b=document.getElementById('go'); b.disabled=true; b.textContent='⟳ working…';
+  setStatus('<span class="spin"></span>starting…','#9fd');
+  tStart=performance.now(); log('generating…');
+  worker.postMessage({type:'generate', bbox:[w,s,e,n], exag:ex});
+}
+document.getElementById('go').onclick=generate;
+
+async function publish(){
+  if(!group){ setStatus('generate a board first','#ffb86b'); return; }
+  const name=prompt('Name this board:',(document.querySelector('h1').textContent||'').replace(/^⛳\s*/,'').trim()||'My board'); if(!name) return;
+  const handle=prompt('Your name/handle (optional):','')||'';
+  const tc=document.createElement('canvas'); tc.width=480; tc.height=360;
+  tc.getContext('2d').drawImage(renderer.domElement,0,0,tc.width,tc.height);
+  const [w,s,e,n]=document.getElementById('bb').value.split(',').map(Number);
+  setStatus('<span class="spin"></span>publishing…','#9fd');
+  try{
+    const r=await (await fetch('/api/designs',{method:'POST',body:JSON.stringify({
+      type:'golf', name, place:lastPlace, bbox:[w,s,e,n],
+      params:{exag:parseFloat(document.getElementById('ex').value)}, handle, thumb:tc.toDataURL('image/png')})})).json();
+    if(r.id){
+      if(lastPreview) await fetch('/api/designs/'+r.id+'/mesh',{method:'POST',body:lastPreview});  // precomputed geometry
+      setStatus('✓ published — <a href="/" style="color:#7dd3fc">view in gallery</a>','#7CFC9A');
+    } else setStatus('publish failed','#ff8a8a');
+  }catch(e){ setStatus('publish failed: '+e.message,'#ff8a8a'); }
+}
+async function applyParams(){
+  if(params.get('bbox')) document.getElementById('bb').value=params.get('bbox');
+  if(params.get('name')) document.querySelector('h1').textContent='⛳ '+params.get('name');
+  if(params.get('q')){ document.getElementById('q').value=params.get('q'); doSearch(); }
+  if(params.get('design')){
+    try{ const d=await (await fetch('/api/designs/'+params.get('design'))).json();
+      document.getElementById('bb').value=d.bbox.join(',');
+      if(d.params&&d.params.exag!=null) document.getElementById('ex').value=d.params.exag;
+      document.querySelector('h1').textContent='⛳ '+d.name; lastPlace=d.place||'';
+      wantAutorun=true;
+    }catch(e){ log('could not load design'); }
+  }
+  maybeAutorun();
+}
+initView();
+document.getElementById('pub').onclick=publish;
+setStatus('<span class="spin"></span>loading engine…','#9fd');
+log('loading Pyodide in background worker…');
+applyParams();
 </script></body></html>

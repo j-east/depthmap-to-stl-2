@@ -11,13 +11,58 @@ refreshes the map.
 
 Run: python3 scripts/path_editor.py   ->  http://localhost:8765
 """
-import base64, json, os, subprocess, threading
+import base64, json, os, re, secrets, sqlite3, subprocess, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse, parse_qs
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PORT = int(os.environ.get("PORT", "8765"))
 HOST = os.environ.get("HOST", "127.0.0.1")
-APP_PASSWORD = os.environ.get("APP_PASSWORD", "")   # if set, gate the whole app
+APP_PASSWORD = os.environ.get("APP_PASSWORD", "")   # if set, gate the authoring tool
+
+# ---- shared-designs gallery: tiny recipe records + votes (the 3MF regenerates client-side) ----
+# Backend: Coolify Postgres when DATABASE_URL is set, else a local SQLite file for dev.
+import contextlib
+DB_PATH = os.path.join(ROOT, "data", "designs.db")
+THUMB_DIR = os.path.join(ROOT, "data", "design_thumbs")
+MESH_DIR = os.path.join(ROOT, "data", "design_meshes")   # precomputed render geometry (instant view)
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+USE_PG = bool(DATABASE_URL)
+_db_lock = threading.Lock()
+if USE_PG:
+    import psycopg2, psycopg2.extras
+
+def _q(sql):
+    return sql.replace("?", "%s") if USE_PG else sql      # placeholder dialect
+
+@contextlib.contextmanager
+def _db():
+    if USE_PG:
+        c = psycopg2.connect(DATABASE_URL)
+        cur = c.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    else:
+        c = sqlite3.connect(DB_PATH); c.row_factory = sqlite3.Row; cur = c.cursor()
+    try:
+        yield cur; c.commit()
+    finally:
+        c.close()
+
+def _init_designs():
+    os.makedirs(THUMB_DIR, exist_ok=True)
+    os.makedirs(MESH_DIR, exist_ok=True)
+    with _db() as cur:
+        cur.execute("""CREATE TABLE IF NOT EXISTS designs(
+            id TEXT PRIMARY KEY, type TEXT, name TEXT, place TEXT, bbox TEXT,
+            params TEXT, handle TEXT, votes INTEGER DEFAULT 0, created DOUBLE PRECISION)""")
+        cur.execute("""CREATE TABLE IF NOT EXISTS votes(
+            design_id TEXT, voter TEXT, PRIMARY KEY(design_id, voter))""")
+
+def _design_row(r):
+    return {"id": r["id"], "type": r["type"], "name": r["name"], "place": r["place"],
+            "bbox": json.loads(r["bbox"]), "params": json.loads(r["params"] or "{}"),
+            "handle": r["handle"], "votes": r["votes"], "created": r["created"],
+            "thumb": os.path.exists(os.path.join(THUMB_DIR, r["id"] + ".png")),
+            "mesh": os.path.exists(os.path.join(MESH_DIR, r["id"] + ".bin"))}
 # region config (must match route_prototype.py)
 _reg = {"bbox": [-68.95, 43.98, -68.44, 44.36]}
 try:
@@ -636,12 +681,15 @@ async function load(){
   const g=document.getElementById('grid'); g.innerHTML='';
   for(const p of d.projects){
     const c=document.createElement('div'); c.className='card'+(p.active?' active':'');
-    const th=p.thumb ? `<img class=thumb src="/thumb/${p.name}?${Date.now()}" onclick="openP('${p.name}')">`
-                     : `<div class="thumb ph" onclick="openP('${p.name}')">no preview yet</div>`;
+    const open = p.kind==='golf' ? `playClient('${p.name}',[${p.bbox}])` : `openP('${p.name}')`;
+    const th=p.thumb ? `<img class=thumb src="/thumb/${p.name}?${Date.now()}" onclick="${open}">`
+                     : `<div class="thumb ph" onclick="${open}">${p.kind==='golf'?'click to render (client-side)':'no preview yet'}</div>`;
+    const clientBtn = p.kind==='golf' ? `<button class=p onclick="playClient('${p.name}',[${p.bbox}])">⚡ Render (client-side)</button>` : '';
     c.innerHTML=th+`<div class=meta><h3>${p.name}</h3>
       <span class="badge ${p.kind}">${p.kind}</span> <span class=badge>${p.source}</span></div>
       <div class=acts>
-        <button class=p onclick="openP('${p.name}')">Open</button>
+        ${clientBtn}
+        <button ${p.kind==='golf'?'':'class=p'} onclick="openP('${p.name}')">Open (editor)</button>
         <button onclick="build('${p.name}')">Build</button>
         <button onclick="dup('${p.name}')">Duplicate</button>
         <button onclick="ren('${p.name}')">Rename</button>
@@ -655,6 +703,7 @@ async function load(){
 }
 async function openP(n){ S.textContent='opening '+n+'…';
   await fetch('/setactive',{method:'POST',body:JSON.stringify({name:n})}); location='/editor'; }
+function playClient(n,bbox){ location='/play?name='+encodeURIComponent(n)+'&bbox='+bbox.join(','); }
 async function build(n){ S.textContent='building '+n+'… (1-2 min)';
   await fetch('/region',{method:'POST',body:JSON.stringify({name:n})});
   const o=await (await fetch('/build',{method:'POST',body:'{}'})).json();
@@ -767,11 +816,17 @@ class H(BaseHTTPRequestHandler):
         pass
 
     def _send(self, code, body, ctype="application/json"):
+        data = body if isinstance(body, bytes) else body.encode()
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Cache-Control", "no-store")
+        if len(data) > 65536 and "gzip" in self.headers.get("Accept-Encoding", ""):
+            import gzip
+            data = gzip.compress(data, 5)
+            self.send_header("Content-Encoding", "gzip")
+        self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        self.wfile.write(body if isinstance(body, bytes) else body.encode())
+        self.wfile.write(data)
 
     def _png(self, name, fallback=None):
         p = os.path.join(ROOT, "data", name)
@@ -799,14 +854,91 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         return False
 
+    def _designs_get(self):
+        u = urlparse(self.path); path = u.path
+        if path.startswith("/thumb-design/"):
+            did = path[len("/thumb-design/"):].split(".")[0]
+            p = os.path.join(THUMB_DIR, did + ".png")
+            if os.path.exists(p):
+                with open(p, "rb") as f: self._send(200, f.read(), "image/png")
+            else: self._send(404, b"no thumb", "text/plain")
+            return
+        if path.startswith("/mesh-design/"):
+            did = path[len("/mesh-design/"):].split(".")[0]
+            p = os.path.join(MESH_DIR, did + ".bin")
+            if os.path.exists(p):
+                with open(p, "rb") as f: self._send(200, f.read(), "application/octet-stream")
+            else: self._send(404, b"no mesh", "text/plain")
+            return
+        if path == "/api/designs":
+            q = parse_qs(u.query)
+            sort = q.get("sort", ["top"])[0]; term = q.get("q", [""])[0].strip().lower()
+            typ = q.get("type", [""])[0]; limit = min(int(q.get("limit", ["60"])[0]), 200)
+            with _db() as cur:
+                cur.execute("SELECT * FROM designs"); rows = [_design_row(r) for r in cur.fetchall()]
+            if typ: rows = [r for r in rows if r["type"] == typ]
+            if term: rows = [r for r in rows if term in (r["name"] or "").lower() or term in (r["place"] or "").lower()]
+            now = time.time()
+            if sort == "new": rows.sort(key=lambda r: -r["created"])
+            elif sort == "trending": rows.sort(key=lambda r: -(r["votes"] + 1) / ((now - r["created"]) / 3600 + 2) ** 1.3)
+            else: rows.sort(key=lambda r: (-r["votes"], -r["created"]))
+            self._send(200, json.dumps({"designs": rows[:limit]}))
+            return
+        m = re.match(r"^/api/designs/([A-Za-z0-9_-]+)$", path)
+        if m:
+            with _db() as cur:
+                cur.execute(_q("SELECT * FROM designs WHERE id=?"), (m.group(1),)); r = cur.fetchone()
+            self._send(200, json.dumps(_design_row(r))) if r else self._send(404, b'{"error":"not found"}')
+            return
+        self._send(404, b'{"error":"not found"}')
+
+    def _designs_post(self, body):
+        path = urlparse(self.path).path
+        if path == "/api/designs":
+            if not body.get("bbox"):
+                self._send(400, b'{"error":"bbox required"}'); return
+            did = secrets.token_urlsafe(7)
+            thumb = body.get("thumb", "")
+            if thumb.startswith("data:"): thumb = thumb.split(",", 1)[1]
+            if thumb:
+                try: open(os.path.join(THUMB_DIR, did + ".png"), "wb").write(base64.b64decode(thumb))
+                except Exception: pass
+            with _db_lock, _db() as cur:
+                cur.execute(_q("INSERT INTO designs(id,type,name,place,bbox,params,handle,votes,created) "
+                               "VALUES(?,?,?,?,?,?,?,0,?)"),
+                            (did, body.get("type", "golf"), (body.get("name") or "Untitled")[:80],
+                             (body.get("place") or "")[:120], json.dumps(body.get("bbox") or []),
+                             json.dumps(body.get("params") or {}), (body.get("handle") or "")[:40], time.time()))
+            self._send(200, json.dumps({"id": did}))
+            return
+        m = re.match(r"^/api/designs/([A-Za-z0-9_-]+)/vote$", path)
+        if m:
+            did = m.group(1); voter = (body.get("voter") or "")[:64]
+            if not voter: self._send(400, b'{"error":"no voter"}'); return
+            with _db_lock, _db() as cur:
+                if USE_PG:
+                    cur.execute("INSERT INTO votes(design_id,voter) VALUES(%s,%s) ON CONFLICT DO NOTHING", (did, voter))
+                else:
+                    cur.execute("INSERT OR IGNORE INTO votes(design_id,voter) VALUES(?,?)", (did, voter))
+                if cur.rowcount > 0: cur.execute(_q("UPDATE designs SET votes=votes+1 WHERE id=?"), (did,))
+                cur.execute(_q("SELECT votes FROM designs WHERE id=?"), (did,)); row = cur.fetchone()
+            self._send(200, json.dumps({"votes": row["votes"] if row else 0, "voted": True}))
+            return
+        self._send(404, b'{"error":"not found"}')
+
     def do_GET(self):
         if self.path == "/health":          # unauthenticated, for the container healthcheck
             self._send(200, b"ok", "text/plain")
             return
         # public client-side generator (all compute in the browser; no auth, no server work)
-        WEB = {"/play": ("golf.html", "text/html"), "/golf": ("golf.html", "text/html"),
+        WEB = {"/": ("gallery.html", "text/html"),
+               "/play": ("golf.html", "text/html"), "/golf": ("golf.html", "text/html"),
+               "/view": ("viewer.html", "text/html"),
                "/proto": ("proto.html", "text/html"),
-               "/board_lib.py": ("board_lib.py", "text/plain; charset=utf-8")}
+               "/board_lib.py": ("board_lib.py", "text/plain; charset=utf-8"),
+               "/worker.js": ("worker.js", "text/javascript"),
+               "/featured-demo.mesh": ("featured-demo.mesh", "application/octet-stream"),
+               "/font.ttf": ("font.ttf", "font/ttf")}
         if self.path.split("?")[0] in WEB:
             name, ctype = WEB[self.path.split("?")[0]]
             p = os.path.join(ROOT, "web", name)
@@ -816,9 +948,12 @@ class H(BaseHTTPRequestHandler):
             else:
                 self._send(404, b"not found", "text/plain")
             return
+        if (self.path.startswith("/api/designs") or self.path.startswith("/thumb-design/")
+                or self.path.startswith("/mesh-design/")):
+            self._designs_get(); return            # public gallery API
         if not self._auth_ok():
             return
-        if self.path == "/":
+        if self.path == "/studio":
             self._send(200, DASH_HTML, "text/html")
         elif self.path == "/editor":
             self._send(200, HTML, "text/html")
@@ -930,6 +1065,15 @@ class H(BaseHTTPRequestHandler):
             self._send(404, "{}")
 
     def do_POST(self):
+        if self.path.startswith("/api/designs"):     # public gallery API
+            n = int(self.headers.get("Content-Length") or 0)
+            mm = re.match(r"^/api/designs/([A-Za-z0-9_-]+)/mesh$", urlparse(self.path).path)
+            if mm:                                    # raw precomputed-geometry upload
+                with open(os.path.join(MESH_DIR, mm.group(1) + ".bin"), "wb") as f:
+                    f.write(self.rfile.read(n))
+                self._send(200, b'{"ok":true}'); return
+            self._designs_post(json.loads(self.rfile.read(n)) if n else {})
+            return
         if not self._auth_ok():
             return
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
@@ -1224,5 +1368,6 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    _init_designs()
     print(f"terrain boards: http://{HOST}:{PORT}  (auth {'on' if APP_PASSWORD else 'off'})")
     ThreadingHTTPServer((HOST, PORT), H).serve_forever()

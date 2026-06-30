@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Terrain Maps — board</title>
+<style>
+  *{box-sizing:border-box} body{margin:0;background:#0d1015;color:#e7e7ef;font:15px -apple-system,system-ui,sans-serif;height:100vh;display:flex;flex-direction:column}
+  a{color:inherit;text-decoration:none}
+  header{padding:12px 18px;display:flex;align-items:center;gap:14px;border-bottom:1px solid #1e2230}
+  .back{color:#9aa;font-size:14px} .title{flex:1} .title h1{margin:0;font-size:17px} .title .p{color:#7a829a;font-size:13px}
+  .btn{background:#2563eb;color:#fff;border:0;border-radius:9px;padding:9px 14px;font-size:14px;cursor:pointer}
+  .btn.ghost{background:#1c2230;border:1px solid #2a3040} .btn:disabled{background:#33415a}
+  .vote{display:flex;align-items:center;gap:6px;background:#1a1f2b;border:1px solid #2a3142;border-radius:9px;padding:8px 13px;cursor:pointer}
+  .vote.voted{background:#23314e;border-color:#2563eb}
+  #view{flex:1;position:relative} #c{width:100%;height:100%;display:block}
+  #status{position:absolute;left:50%;top:14px;transform:translateX(-50%);font-size:13px;color:#9fd;background:#0d1015cc;padding:5px 12px;border-radius:8px}
+  .spin{display:inline-block;width:12px;height:12px;border:2px solid #3a3a52;border-top-color:#7dd3fc;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-1px;margin-right:6px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+</style></head><body>
+<header>
+  <a class="back" href="/">← Gallery</a>
+  <div class="title"><h1 id="name">…</h1><div class="p" id="place"></div></div>
+  <span class="vote" id="vote" onclick="vote()">▲ <b id="votes">0</b></span>
+  <button class="btn ghost" id="remix">✎ Remix</button>
+  <button class="btn ghost" id="dl">⬇ Download 3MF</button>
+  <button class="btn" id="order">Order print</button>
+</header>
+<div id="view"><canvas id="c"></canvas><div id="status" style="display:none"></div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+const ID=new URLSearchParams(location.search).get('design');
+let VOTER=localStorage.getItem('voter'); if(!VOTER){VOTER=Math.random().toString(36).slice(2)+Date.now().toString(36);localStorage.setItem('voter',VOTER);}
+const VOTED=new Set(JSON.parse(localStorage.getItem('voted')||'[]'));
+let design=null;
+const st=(h,c)=>{const s=document.getElementById('status');if(!h){s.style.display='none';return;}s.style.display='block';s.innerHTML=h;s.style.color=c||'#9fd';};
+
+let renderer,scene,camera,controls,group;
+function initView(){
+  const cv=document.getElementById('c'), el=cv.parentElement;
+  renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true}); renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2)); renderer.setSize(el.clientWidth,el.clientHeight);
+  scene=new THREE.Scene(); scene.background=new THREE.Color(0x0d1015);
+  camera=new THREE.PerspectiveCamera(42,el.clientWidth/el.clientHeight,0.1,5000); camera.up.set(0,0,1); camera.position.set(142,-270,210);
+  controls=new THREE.OrbitControls(camera,cv); controls.enableDamping=true; controls.autoRotate=true; controls.autoRotateSpeed=1.0;
+  scene.add(new THREE.HemisphereLight(0xffffff,0x223,0.85)); const d=new THREE.DirectionalLight(0xffffff,0.7); d.position.set(-1,-1,2); scene.add(d);
+  addEventListener('resize',()=>{renderer.setSize(el.clientWidth,el.clientHeight);camera.aspect=el.clientWidth/el.clientHeight;camera.updateProjectionMatrix();});
+  cv.addEventListener('pointerdown',()=>controls.autoRotate=false);
+  (function loop(){requestAnimationFrame(loop);controls.update();renderer.render(scene,camera);})();
+}
+function unpackMesh(buf){
+  const dv=new DataView(buf),hlen=dv.getUint32(0,true);
+  const header=JSON.parse(new TextDecoder().decode(new Uint8Array(buf,4,hlen)));
+  let off=4+hlen; return header.objects.map(o=>{const v=buf.slice(off,off+o.v);off+=o.v;const t=buf.slice(off,off+o.t);off+=o.t;return{color:o.color,verts:v,tris:t};});
+}
+function showMesh(objs){
+  const g=new THREE.Group();
+  objs.forEach(o=>{const geo=new THREE.BufferGeometry();
+    geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(o.verts),3));
+    geo.setIndex(new THREE.BufferAttribute(new Uint32Array(o.tris),1)); geo.computeVertexNormals();
+    g.add(new THREE.Mesh(geo,new THREE.MeshStandardMaterial({color:new THREE.Color(o.color),roughness:0.92,side:THREE.DoubleSide})));});
+  const box=new THREE.Box3().setFromObject(g),c=box.getCenter(new THREE.Vector3()); g.position.set(-c.x,-c.y,-c.z);
+  if(group)scene.remove(group); group=g; scene.add(g);
+}
+async function load(){
+  initView();
+  try{
+    design=await (await fetch('/api/designs/'+ID)).json();
+    document.getElementById('name').textContent=design.name;
+    document.getElementById('place').textContent=design.place||'';
+    document.getElementById('votes').textContent=design.votes;
+    if(VOTED.has(ID)) document.getElementById('vote').classList.add('voted');
+    document.getElementById('remix').onclick=()=>location='/play?design='+ID;
+    document.getElementById('order').onclick=()=>st('ordering/checkout coming soon','#ffb86b');
+    document.getElementById('dl').onclick=download;
+    if(design.mesh){ showMesh(unpackMesh(await (await fetch('/mesh-design/'+ID)).arrayBuffer())); }   // instant
+    else st('no preview mesh — try Remix to rebuild','#ffb86b');
+  }catch(e){ st('could not load board: '+e.message,'#ff8a8a'); }
+}
+async function vote(){
+  if(!ID||VOTED.has(ID)) return;
+  try{ const r=await (await fetch('/api/designs/'+ID+'/vote',{method:'POST',body:JSON.stringify({voter:VOTER})})).json();
+    document.getElementById('votes').textContent=r.votes; document.getElementById('vote').classList.add('voted');
+    VOTED.add(ID); localStorage.setItem('voted',JSON.stringify([...VOTED])); }catch(e){}
+}
+// Download lazily spins up Pyodide (only when explicitly requested) and rebuilds the print-res 3MF
+let worker=null, workerReadyOnce=false, pendingFire=null;
+function ensureWorker(){
+  if(worker) return;
+  worker=new Worker('worker.js');
+  worker.onmessage=(ev)=>{ const m=ev.data;
+    if(m.type==='ready'){ workerReadyOnce=true; if(pendingFire){pendingFire();pendingFire=null;} }
+    else if(m.type==='progress') st('<span class="spin"></span>'+m.msg);
+    else if(m.type==='error'){ st('failed: '+m.msg,'#ff8a8a'); document.getElementById('dl').disabled=false; }
+    else if(m.type==='done'){
+      const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([m.tmf],{type:'model/3mf'}));
+      a.download=(design.name||'board')+'.3mf'; a.click();
+      st('✓ downloaded','#7CFC9A'); document.getElementById('dl').disabled=false; setTimeout(()=>st(''),2500);
+    }};
+}
+function download(){
+  if(!design) return;
+  document.getElementById('dl').disabled=true; st('<span class="spin"></span>preparing 3MF (first time loads the engine)…');
+  ensureWorker();
+  const fire=()=>worker.postMessage({type:'generate',bbox:design.bbox,exag:(design.params&&design.params.exag)||4});
+  if(workerReadyOnce) fire(); else pendingFire=fire;
+}
+load();
+</script></body></html>

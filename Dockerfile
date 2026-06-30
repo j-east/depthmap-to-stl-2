@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fonts-dejavu-core curl && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-RUN pip install --no-cache-dir numpy scipy pillow matplotlib
+RUN pip install --no-cache-dir numpy scipy pillow matplotlib psycopg2-binary
 
 COPY scripts/ ./scripts/
 COPY data/ ./data/

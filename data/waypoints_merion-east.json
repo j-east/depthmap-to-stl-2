@@ -1,0 +1,13 @@
+{
+ "mode": "waypoints",
+ "waypoints": [],
+ "crop": null,
+ "label_overrides": {},
+ "custom_labels": [],
+ "options": {
+  "start_holes": 2,
+  "end_marker": "double",
+  "peg_storage": false
+ },
+ "min_radius_mm": 8
+}

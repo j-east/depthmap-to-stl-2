@@ -3,20 +3,74 @@ and OSM golf polygons for a bbox, builds a colored relief board: terrain base +
 turf layers as proud colored decals -> per-object geometry (for WebGL) and a
 multicolor 3MF. Axis-aligned v1 (no rotation/detection/labels yet)."""
 import numpy as np, io, json, math, zipfile
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
-# layer -> (color, proud mm), low to high precedence
-TURF = [("fairway", (150, 200, 104), 0.5),
-        ("tee",     (118, 176, 120), 0.6),
-        ("water",   (64, 132, 196), 0.3),
-        ("bunker",  (238, 222, 170), 0.6),
-        ("green",   (198, 226, 128), 0.8)]
 ROUGH = (78, 120, 66)
-PITCH = 0.6          # mesh pitch (mm)
+# (name, color, proud_mm, kind, width_m) — drawn in order; later overwrites on overlap.
+# "poly" fills closed ways (turf); "line" strokes open ways (roads/paths/rail) to width_m.
+LAYERS = [("fairway",  (150, 200, 104), 0.5, "poly", 0),
+          ("tee",      (118, 176, 120), 0.6, "poly", 0),
+          ("green",    (198, 226, 128), 0.8, "poly", 0),
+          ("bunker",   (238, 222, 170), 0.6, "poly", 0),
+          ("road",     (96, 96, 104),  0.4, "line", 7.0),
+          ("rail",     (70, 70, 78),   0.7, "line", 3.5),
+          ("cartpath", (212, 200, 180), 0.5, "line", 2.4)]
+WATER_COLOR = (58, 124, 190)
+SEA_LEVEL = 0.3          # m: cells below this are water (real bathymetry from NOAA topobathy)
+OCEAN_CLAMP_M = 18.0     # cap shown ocean depth so deep water doesn't blow out the land scale
+PITCH = 0.5          # mesh pitch (mm) — finer = more resolution
 EMBED = 0.2
 
 
-def _mesh(mask, ztop, zbot, BH):
+def _point_at(pts, frac):
+    """Point at `frac` of the arc length along a polyline of (x, y) tuples."""
+    if len(pts) < 2:
+        return pts[0]
+    seg = [math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]) for i in range(len(pts) - 1)]
+    tot = sum(seg)
+    if tot == 0:
+        return pts[0]
+    target, acc = tot * frac, 0.0
+    for i, d in enumerate(seg):
+        if acc + d >= target:
+            f = (target - acc) / d if d else 0
+            return (pts[i][0] + f * (pts[i + 1][0] - pts[i][0]), pts[i][1] + f * (pts[i + 1][1] - pts[i][1]))
+        acc += d
+    return pts[-1]
+
+
+def _declutter(labels, min_d, nx, ny, iters=80):
+    """Nudge labels [num, x, y] apart so none sit closer than min_d (simple relaxation)."""
+    for _ in range(iters):
+        moved = False
+        for i in range(len(labels)):
+            for j in range(i + 1, len(labels)):
+                dx = labels[j][1] - labels[i][1]; dy = labels[j][2] - labels[i][2]
+                d = math.hypot(dx, dy)
+                if d < min_d:
+                    if d < 1e-6:
+                        dx, dy, d = 1.0, 0.0, 1.0          # exact overlap -> arbitrary push
+                    push = (min_d - d) / 2
+                    ux, uy = dx / d, dy / d
+                    labels[i][1] -= ux * push; labels[i][2] -= uy * push
+                    labels[j][1] += ux * push; labels[j][2] += uy * push
+                    moved = True
+        if not moved:
+            break
+    for L in labels:                                       # keep on the board
+        L[1] = min(max(L[1], 4), nx - 4); L[2] = min(max(L[2], 4), ny - 4)
+
+
+def _erode(m, k):
+    """k iterations of 4-neighbour binary erosion (numpy; no scipy needed)."""
+    for _ in range(k):
+        e = m.copy()
+        e[1:, :] &= m[:-1, :]; e[:-1, :] &= m[1:, :]; e[:, 1:] &= m[:, :-1]; e[:, :-1] &= m[:, 1:]
+        m = e
+    return m
+
+
+def _mesh(mask, ztop, zbot, BH, pitch):
     """Masked column mesher: top + bottom + perimeter walls. mask (ny,nx) bool;
     ztop/zbot (ny+1,nx+1) corner heights. Returns (verts f32 Nx3, tris u32 Mx3)."""
     ny, nx = mask.shape
@@ -25,7 +79,7 @@ def _mesh(mask, ztop, zbot, BH):
     rr, cc = np.where(need)
     tid = np.full((ny + 1, nx + 1), -1, np.int64); bid = np.full((ny + 1, nx + 1), -1, np.int64)
     tid[rr, cc] = np.arange(len(rr)); bid[rr, cc] = np.arange(len(rr)) + len(rr)
-    xs = cc * PITCH; ys = BH - rr * PITCH
+    xs = cc * pitch; ys = BH - rr * pitch
     V = np.concatenate([np.c_[xs, ys, ztop[rr, cc]], np.c_[xs, ys, zbot[rr, cc]]])
     r, c = np.where(mask)
     A, B, C, D = tid[r, c], tid[r, c + 1], tid[r + 1, c + 1], tid[r + 1, c]
@@ -42,7 +96,9 @@ def _mesh(mask, ztop, zbot, BH):
     return V.astype(np.float32), np.concatenate(F).astype(np.uint32)
 
 
-def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0):
+def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
+               holes_json="[]", font_bytes=None, pitch=None):
+    P = float(pitch) if pitch else PITCH       # mesh pitch (mm); coarse for fast previews
     raw = dem_in.to_py() if hasattr(dem_in, "to_py") else dem_in
     if not ncols:                       # raw is a float32 GeoTIFF (USGS 3DEP) -> decode
         dem = np.asarray(Image.open(io.BytesIO(bytes(raw))), dtype=np.float64)
@@ -62,36 +118,101 @@ def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0)
     else:
         BW, BH = 255.0 * Wm / Hm, 255.0
     ZPM = (255.0 / max(Wm, Hm)) * exag
-    nyb, nxb = int(BH / PITCH), int(BW / PITCH)
+    nyb, nxb = int(BH / P), int(BW / P)
 
     # corner heights sampled from the DEM (row0 = north for both)
     rr = np.clip((np.arange(nyb + 1) / nyb * (nrows - 1)).astype(int), 0, nrows - 1)
     cc = np.clip((np.arange(nxb + 1) / nxb * (ncols - 1)).astype(int), 0, ncols - 1)
     samp = dem[np.ix_(rr, cc)]
-    datum = float(np.nanmin(dem))
-    Zt = (base_mm + np.maximum(samp - datum, 0.0) * ZPM).astype(np.float64)
+    # heights relative to the lowest LAND (so inland boards aren't lifted by absolute elevation);
+    # below sea level recesses into a basin with clamped depth (real bathymetry shape).
+    land = samp >= 0.0
+    datum = float(samp[land].min()) if land.any() else float(samp.min())
+    recess = min(base_mm - 2.0, 6.0)
+    land_z = base_mm + np.maximum(samp - datum, 0.0) * ZPM
+    depth = np.minimum(np.maximum(-samp, 0.0), OCEAN_CLAMP_M)
+    ocean_z = base_mm - depth / OCEAN_CLAMP_M * recess
+    Zt = np.where(samp >= 0.0, land_z, ocean_z).astype(np.float64)
 
     def ll_px(lon, lat):
         return ((lon - w) / (e - w) * nxb, (n - lat) / (n - s) * nyb)
+    px_per_m = (255.0 / max(Wm, Hm)) / P            # board-grid pixels per ground metre
 
-    # exclusive turf label grid (precedence by draw order)
+    # exclusive label grid (precedence by draw order; lines stroked over turf)
     img = Image.new("L", (nxb, nyb), 0)
     dr = ImageDraw.Draw(img)
-    for i, (name, _, _) in enumerate(TURF):
-        for poly in feats.get(name, []):
-            pts = [ll_px(lo, la) for lo, la in poly]
-            if len(pts) >= 3:
+    for i, (name, color, proud, kind, width_m) in enumerate(LAYERS):
+        for way in feats.get(name, []):
+            pts = [ll_px(lo, la) for lo, la in way]
+            if kind == "poly" and len(pts) >= 3:
                 dr.polygon(pts, fill=i + 1)
+            elif kind == "line" and len(pts) >= 2:
+                dr.line(pts, fill=i + 1, width=max(1, int(round(width_m * px_per_m))), joint="curve")
     lbl = np.array(img)
 
     objects = []
-    Vb, Fb = _mesh(np.ones((nyb, nxb), bool), Zt, np.zeros_like(Zt), BH)
+    Vb, Fb = _mesh(np.ones((nyb, nxb), bool), Zt, np.zeros_like(Zt), BH, P)
     objects.append(("rough", ROUGH, Vb, Fb))
-    for i, (name, color, proud) in enumerate(TURF):
+    for i, (name, color, proud, kind, width_m) in enumerate(LAYERS):
         m = lbl == (i + 1)
         if m.any():
-            V, F = _mesh(m, Zt + proud, Zt - EMBED, BH)
+            V, F = _mesh(m, Zt + proud, Zt - EMBED, BH, P)
             objects.append((name, color, V, F))
+
+    # water: OSM water polygons + ocean (DEM at/below sea level), flat blue, where no turf
+    crr = np.clip(((np.arange(nyb) + 0.5) / nyb * (nrows - 1)).astype(int), 0, nrows - 1)
+    ccc = np.clip(((np.arange(nxb) + 0.5) / nxb * (ncols - 1)).astype(int), 0, ncols - 1)
+    cell = dem[np.ix_(crr, ccc)]
+    wimg = Image.new("L", (nxb, nyb), 0); wd = ImageDraw.Draw(wimg)
+    for way in feats.get("water", []):
+        pts = [ll_px(lo, la) for lo, la in way]
+        if len(pts) >= 3:
+            wd.polygon(pts, fill=1)
+    # water = below sea level (ocean, with real depth) + OSM lakes/ponds; blue, following Zt
+    water = ((np.array(wimg) > 0) | (cell < SEA_LEVEL)) & (lbl == 0)
+    if water.any():
+        V, F = _mesh(water, Zt + 0.15, Zt - EMBED, BH, P)
+        objects.append(("water", WATER_COLOR, V, F))
+
+    # hole outlines (corridor boundary, kept on rough) + raised hole numbers
+    holes = json.loads(holes_json) if holes_json else []
+    if holes:
+        corr = Image.new("L", (nxb, nyb), 0); cd = ImageDraw.Draw(corr)
+        cw = max(1, int(round(60.0 * px_per_m)))            # ~60 m playing corridor
+        for h in holes:
+            pts = [ll_px(lo, la) for lo, la in h["pts"]]
+            if len(pts) >= 2:
+                cd.line(pts, fill=1, width=cw, joint="curve")
+        corr = np.array(corr) > 0
+        outline = (corr & ~_erode(corr, max(1, int(round(1.4 / P))))) & (lbl == 0)
+        if outline.any():
+            V, F = _mesh(outline, Zt + 0.9, Zt - EMBED, BH, P)
+            objects.append(("outline", (28, 64, 38), V, F))      # dark green
+
+        raw_font = font_bytes.to_py() if hasattr(font_bytes, "to_py") else font_bytes
+        if raw_font is not None:
+            fpx = max(8, int(round(9.0 / P)))
+            font = ImageFont.truetype(io.BytesIO(bytes(raw_font)), fpx)
+            def place(pts_px):                       # prefer hole midpoint, but keep off water
+                for t in (0.5, 0.45, 0.55, 0.4, 0.6, 0.35, 0.65, 0.3, 0.7):
+                    x, y = _point_at(pts_px, t); xi, yi = int(x), int(y)
+                    if 0 <= xi < nxb and 0 <= yi < nyb and not water[yi, xi]:
+                        return (x, y)
+                return _point_at(pts_px, 0.5)
+            labels = []
+            for h in holes:
+                num = str(h.get("num") or "").strip()
+                if num:
+                    mx, my = place([ll_px(lo, la) for lo, la in h["pts"]])
+                    labels.append([num, mx, my])
+            _declutter(labels, fpx * 1.5, nxb, nyb)        # push apart if too close
+            nimg = Image.new("L", (nxb, nyb), 0); nd = ImageDraw.Draw(nimg)
+            for num, x, y in labels:
+                nd.text((x, y), num, font=font, fill=1, anchor="mm")
+            nmask = np.array(nimg) > 0
+            if nmask.any():
+                V, F = _mesh(nmask, Zt + 1.1, Zt - EMBED, BH, P)
+                objects.append(("numbers", (245, 245, 245), V, F))
 
     tmf = _make_3mf(objects)
     return {
