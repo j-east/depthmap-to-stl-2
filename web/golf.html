@@ -1,195 +1,228 @@
 <!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Terrain Boards — golf (client-side)</title>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Terrain Maps — create a golf board</title>
 <style>
-  body{margin:0;background:#11151a;color:#dde;font:14px -apple-system,sans-serif;display:flex;height:100vh}
-  #side{width:300px;padding:18px;flex-shrink:0;overflow:auto}
-  h1{font-size:16px;color:#fff} button{background:#2563eb;color:#fff;border:0;border-radius:7px;padding:10px 14px;font-size:14px;cursor:pointer}
-  button:disabled{background:#33415a;cursor:default}
+  *{box-sizing:border-box} body{margin:0;background:#11151a;color:#dde;font:14px -apple-system,sans-serif;display:flex;height:100vh}
+  a{color:#7dd3fc;text-decoration:none}
+  #side{width:300px;padding:16px;flex-shrink:0;overflow:auto}
+  h1{font-size:16px;color:#fff;margin:0 0 4px} button{background:#2563eb;color:#fff;border:0;border-radius:7px;padding:10px 14px;font-size:14px;cursor:pointer}
+  button:disabled{background:#33415a;cursor:default} button.go{width:100%;background:#1f7a3a;font-weight:600}
   label{display:block;margin:10px 0 3px;color:#9a9ab0;font-size:12px}
   input{width:100%;box-sizing:border-box;background:#22222e;color:#eee;border:1px solid #3a3a52;border-radius:5px;padding:6px}
-  #log{margin-top:14px;font:12px ui-monospace,monospace;white-space:pre-wrap;color:#9fd}
-  #view{flex:1;position:relative} #dl{display:none;margin-top:12px} #dl a{color:#7dd3fc}
-  #status{margin-top:10px;font-size:13px;min-height:18px;color:#9a9ab0}
-  .spin{display:inline-block;width:12px;height:12px;border:2px solid #3a3a52;border-top-color:#7dd3fc;
-        border-radius:50%;animation:sp .7s linear infinite;vertical-align:-1px;margin-right:6px}
+  #log{margin-top:12px;font:12px ui-monospace,monospace;white-space:pre-wrap;color:#9fd}
+  #view{flex:1;position:relative}
+  #plan{position:absolute;inset:0;width:100%;height:100%;display:none;cursor:crosshair;background:#0f1319}
+  #dl{display:none;margin-top:10px} #status{margin-top:10px;font-size:13px;min-height:18px;color:#9a9ab0}
+  .spin{display:inline-block;width:12px;height:12px;border:2px solid #3a3a52;border-top-color:#7dd3fc;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-1px;margin-right:6px}
   @keyframes sp{to{transform:rotate(360deg)}}
+  .tip{color:#8a94ad;font-size:12px;margin-top:8px;line-height:1.5}
+  /* polished buttons + toggle */
+  button{transition:filter .12s,background .12s} button:hover:not(:disabled){filter:brightness(1.12)}
+  button:active:not(:disabled){transform:translateY(1px)}
+  #edit{background:#2a3142;color:#cdd}
+  .tog{display:flex;align-items:center;gap:9px;cursor:pointer;color:#9a9ab0;font-size:13px;margin-top:12px;user-select:none}
+  .tog input{position:absolute;opacity:0;pointer-events:none}
+  .tog .sw{width:36px;height:20px;border-radius:11px;background:#3a3a52;position:relative;transition:.16s;flex-shrink:0}
+  .tog .sw:after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:.16s}
+  .tog input:checked + .sw{background:#1f7a3a} .tog input:checked + .sw:after{left:18px}
 </style></head><body>
 <div id="side">
-  <h1>⛳ Golf board — client-side</h1>
-  <p style="color:#9a9ab0;font-size:12px">Terrain + OSM turf + multicolor 3MF, all in your browser.</p>
+  <h1 id="h1">⛳ Create a board</h1>
+  <a href="/" style="font-size:12px">← gallery</a>
   <label>search a golf course</label>
   <input id="q" placeholder="e.g. Pebble Beach" onkeydown="if(event.key==='Enter')doSearch()">
-  <button id="searchBtn" onclick="doSearch()" style="margin-top:6px">Search</button>
-  <div id="results" style="margin-top:8px;max-height:240px;overflow:auto"></div>
+  <button onclick="doSearch()" style="margin-top:6px">Search</button>
+  <div id="results" style="margin-top:8px;max-height:200px;overflow:auto"></div>
   <details style="margin-top:10px"><summary style="color:#9a9ab0;font-size:12px;cursor:pointer">advanced: bbox</summary>
-  <label>bbox  W, S, E, N</label><input id="bb" value="-71.1596, 42.30755, -71.1417, 42.31945"></details>
-  <label>vertical exaggeration</label><input id="ex" value="4.0">
-  <button id="go" disabled>Loading Pyodide…</button>
+  <label>bbox W,S,E,N</label><input id="bb"><button onclick="enterEditFromBbox()" style="margin-top:6px">Edit this bbox</button></details>
+
+  <div id="editpanel" style="display:none">
+    <label>vertical exaggeration</label><input id="ex" value="4.0">
+    <button class="go" id="gen">✓ Generate board</button>
+    <div class="tip">Drag the <b>crop box</b> edges/corners to frame the board. Drag <b>hole numbers</b> to move them; click the ✕ to delete a stray one (e.g. a practice course).</div>
+  </div>
+
+  <div id="donepanel" style="display:none">
+    <button id="edit" style="width:100%">✎ Edit crop / labels</button>
+    <div id="dl"><a id="dla" download="golf.3mf">⬇ download 3MF</a></div>
+    <button class="go" id="pub" style="margin-top:10px;width:100%">↑ Publish to gallery</button>
+  </div>
+  <label class="tog"><input type="checkbox" id="spin" onchange="controls.autoRotate=this.checked"><span class="sw"></span> auto-rotate</label>
   <div id="status"></div>
-  <label style="margin-top:8px"><input type="checkbox" id="spin" onchange="controls.autoRotate=this.checked"> auto-rotate</label>
-  <div id="dl"><a id="dla" download="golf.3mf">⬇ download 3MF</a></div>
-  <button id="pub" style="margin-top:10px;background:#1f2b22;border:1px solid #6b9a52">↑ Publish to gallery</button>
   <div id="log"></div>
-  <div style="margin-top:14px"><a href="/" style="color:#7a7a90;font-size:12px">← back to gallery</a></div>
 </div>
-<div id="view"></div>
+<div id="view"><canvas id="plan"></canvas></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script>
-const log=(m)=>{document.getElementById('log').textContent+=m+"\n";console.log(m);};
+const log=(m)=>{const l=document.getElementById('log');l.textContent+=m+"\n";console.log(m);};
+const setStatus=(h,c)=>{const s=document.getElementById('status');s.innerHTML=h;s.style.color=c||'#9a9ab0';};
 const params=new URLSearchParams(location.search);
-let wantAutorun=!!params.get('bbox'), didAutorun=false, lastPlace=params.get('name')||'';
-function maybeAutorun(){ if(workerReady && wantAutorun && !didAutorun){ didAutorun=true; generate(); } }
+let lastPlace=params.get('name')||'';
 
-// ---- Three.js scene (always rendering; never blocked by the build) ----
-let renderer,scene,camera,controls,group;
+// ---------- 3D view (result) ----------
+let renderer,scene,camera,controls,group,lastPreview=null;
 function initView(){
   const el=document.getElementById('view');
   renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});
   renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2)); renderer.setSize(el.clientWidth,el.clientHeight);
-  el.appendChild(renderer.domElement);
+  renderer.domElement.style.cssText='position:absolute;inset:0'; el.appendChild(renderer.domElement);
   scene=new THREE.Scene(); scene.background=new THREE.Color(0x11151a);
-  camera=new THREE.PerspectiveCamera(45,el.clientWidth/el.clientHeight,0.1,5000);
-  camera.up.set(0,0,1); camera.position.set(120,-200,170);
-  controls=new THREE.OrbitControls(camera,renderer.domElement);
-  controls.enableDamping=true; controls.dampingFactor=0.08; controls.autoRotateSpeed=1.2;
-  scene.add(new THREE.HemisphereLight(0xffffff,0x223,0.75));
-  const d=new THREE.DirectionalLight(0xffffff,0.75); d.position.set(-1,-1,2); scene.add(d);
-  addEventListener('resize',()=>{renderer.setSize(el.clientWidth,el.clientHeight);
-    camera.aspect=el.clientWidth/el.clientHeight; camera.updateProjectionMatrix();});
-  (function loop(){requestAnimationFrame(loop);controls.update();renderer.render(scene,camera);})();
+  camera=new THREE.PerspectiveCamera(45,el.clientWidth/el.clientHeight,0.1,5000); camera.up.set(0,0,1); camera.position.set(142,-270,210);
+  controls=new THREE.OrbitControls(camera,renderer.domElement); controls.enableDamping=true; controls.dampingFactor=0.08; controls.autoRotateSpeed=1.2;
+  scene.add(new THREE.HemisphereLight(0xffffff,0x223,0.75)); const d=new THREE.DirectionalLight(0xffffff,0.75); d.position.set(-1,-1,2); scene.add(d);
+  addEventListener('resize',()=>{const e=document.getElementById('view');renderer.setSize(e.clientWidth,e.clientHeight);camera.aspect=e.clientWidth/e.clientHeight;camera.updateProjectionMatrix();fitPlan();drawPlan();});
+  (function loop(){requestAnimationFrame(loop);if(controls)controls.update();renderer.render(scene,camera);})();
 }
 function showObjects(objs){
   const g=new THREE.Group();
-  objs.forEach(o=>{
-    const geo=new THREE.BufferGeometry();
+  objs.forEach(o=>{const geo=new THREE.BufferGeometry();
     geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(o.verts),3));
     geo.setIndex(new THREE.BufferAttribute(new Uint32Array(o.tris),1)); geo.computeVertexNormals();
-    g.add(new THREE.Mesh(geo,new THREE.MeshStandardMaterial({color:new THREE.Color(o.color),roughness:0.92,side:THREE.DoubleSide})));
-  });
-  const box=new THREE.Box3().setFromObject(g), c=box.getCenter(new THREE.Vector3());
-  g.position.set(-c.x,-c.y,-c.z);
-  const old=group; group=g; scene.add(g);          // add new, then drop old -> seamless swap
-  if(old){ scene.remove(old); old.traverse(o=>{if(o.geometry)o.geometry.dispose();}); }
+    g.add(new THREE.Mesh(geo,new THREE.MeshStandardMaterial({color:new THREE.Color(o.color),roughness:0.92,side:THREE.DoubleSide})));});
+  const box=new THREE.Box3().setFromObject(g),c=box.getCenter(new THREE.Vector3()); g.position.set(-c.x,-c.y,-c.z);
+  const old=group; group=g; scene.add(g); if(old){scene.remove(old);old.traverse(o=>{if(o.geometry)o.geometry.dispose();});}
 }
 
-// ---- course search via Nominatim (main thread; fast) ----
-async function nominatim(q){
-  const url='https://nominatim.openstreetmap.org/search?format=jsonv2&limit=20&namedetails=1&q='+encodeURIComponent(q);
-  const r=await fetch(url,{headers:{'Accept':'application/json'}});
-  if(!r.ok) throw new Error('Nominatim HTTP '+r.status);
-  return await r.json();
-}
+// ---------- course search (Nominatim) ----------
+async function nominatim(q){ const r=await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=20&namedetails=1&q='+encodeURIComponent(q),{headers:{'Accept':'application/json'}}); if(!r.ok)throw new Error('Nominatim '+r.status); return r.json(); }
 async function searchCourses(name){
-  let arr=await nominatim(name);
-  let golf=arr.filter(x=>x.type==='golf_course');
+  let arr=await nominatim(name), golf=arr.filter(x=>x.type==='golf_course');
   if(!golf.length && !/golf/i.test(name)){ arr=await nominatim(name+' golf course'); golf=arr.filter(x=>x.type==='golf_course'); }
-  const use=golf.length?golf:arr;
-  return use.map(x=>{ const bb=x.boundingbox.map(Number);
-    return {name:(x.namedetails&&x.namedetails.name)||x.display_name.split(',')[0], full:x.display_name,
-            isGolf:x.type==='golf_course', b:{minlat:bb[0],maxlat:bb[1],minlon:bb[2],maxlon:bb[3]}};});
+  return (golf.length?golf:arr).map(x=>{const bb=x.boundingbox.map(Number);
+    return {name:(x.namedetails&&x.namedetails.name)||x.display_name.split(',')[0],full:x.display_name,isGolf:x.type==='golf_course',b:{minlat:bb[0],maxlat:bb[1],minlon:bb[2],maxlon:bb[3]}};});
 }
 async function doSearch(){
-  const name=document.getElementById('q').value.trim(); if(!name) return;
+  const name=document.getElementById('q').value.trim(); if(!name)return;
   const rd=document.getElementById('results'); rd.textContent='searching…';
-  try{
-    const list=await searchCourses(name);
-    if(!list.length){ rd.textContent='no matches for "'+name+'"'; return; }
-    rd.innerHTML='';
-    list.slice(0,25).forEach(c=>{
-      const where=c.full.split(',').slice(1,4).join(',').trim();
-      const tag=c.isGolf?'':' <span style="color:#c08">· area, not a mapped course</span>';
-      const el=document.createElement('div');
+  try{ const list=await searchCourses(name); if(!list.length){rd.textContent='no matches';return;} rd.innerHTML='';
+    list.slice(0,20).forEach(c=>{const el=document.createElement('div');
       el.style.cssText='padding:7px 8px;margin:4px 0;background:#22222e;border:1px solid #33415a;border-radius:6px;cursor:pointer;font-size:13px';
-      el.innerHTML=`<b>${c.name}</b>${tag}<br><span style="color:#7a7a90;font-size:11px">${where}</span>`;
-      el.onclick=()=>pickCourse(c); rd.appendChild(el);
-    });
-    if(list.length>25) rd.appendChild(Object.assign(document.createElement('div'),{textContent:'…'+(list.length-25)+' more — refine the name',style:'color:#7a7a90;font-size:11px;margin-top:4px'}));
-  }catch(err){ rd.textContent='search failed: '+err.message; }
+      el.innerHTML='<b>'+c.name+'</b><br><span style="color:#7a7a90;font-size:11px">'+c.full.split(',').slice(1,4).join(',')+'</span>';
+      el.onclick=()=>pickCourse(c); rd.appendChild(el);}); }catch(e){ rd.textContent='search failed: '+e.message; }
 }
 function pickCourse(c){
+  lastPlace=c.full||c.name; document.getElementById('h1').textContent='⛳ '+c.name;
   let {minlon,minlat,maxlon,maxlat}=c.b;
-  if(maxlat-minlat<0.004 || maxlon-minlon<0.004){
-    const cy=(minlat+maxlat)/2, cx=(minlon+maxlon)/2, dy=0.0075, dx=0.0075/Math.cos(cy*Math.PI/180);
-    minlat=cy-dy; maxlat=cy+dy; minlon=cx-dx; maxlon=cx+dx;
-  }
-  const px=(maxlon-minlon)*0.08, py=(maxlat-minlat)*0.08;
-  document.getElementById('bb').value=[minlon-px,minlat-py,maxlon+px,maxlat+py].map(v=>v.toFixed(6)).join(',');
-  document.querySelector('h1').textContent='⛳ '+c.name; lastPlace=c.full||c.name;
-  generate();
+  if(maxlat-minlat<0.004||maxlon-minlon<0.004){const cy=(minlat+maxlat)/2,cx=(minlon+maxlon)/2,dy=0.0075,dx=0.0075/Math.cos(cy*Math.PI/180);minlat=cy-dy;maxlat=cy+dy;minlon=cx-dx;maxlon=cx+dx;}
+  enterEdit([minlon,minlat,maxlon,maxlat]);     // guess bbox
 }
+function enterEditFromBbox(){ const v=document.getElementById('bb').value.split(',').map(Number); if(v.length===4) enterEdit(v); }
 
-// ---- the build runs in a worker; the main thread stays free to render ----
-function setStatus(html,color){const s=document.getElementById('status');s.innerHTML=html;s.style.color=color||'#9a9ab0';}
-let workerReady=false, tStart=0, lastPreview=null;
+// ---------- the EDIT step: 2D plan + crop box + draggable/deletable hole numbers ----------
+const plan=document.getElementById('plan'); const px=plan.getContext('2d');
+let editing=false, VP=null, cropLL=null, feats={}, labels=[], scaleM=1, offX=0, offY=0, mPerLon=1, mPerLat=111320;
+let drag=null;   // {kind:'crop-<handle>'|'label', idx}
+function expand(bb,f){ const cx=(bb[0]+bb[2])/2, cy=(bb[1]+bb[3])/2; return [cx+(bb[0]-cx)*f, cy+(bb[1]-cy)*f, cx+(bb[2]-cx)*f, cy+(bb[3]-cy)*f]; }
+function fitPlan(){ if(!VP)return; plan.width=plan.clientWidth; plan.height=plan.clientHeight;
+  const clat=(VP[1]+VP[3])/2; mPerLon=111320*Math.cos(clat*Math.PI/180); mPerLat=111320;
+  const Wm=(VP[2]-VP[0])*mPerLon, Hm=(VP[3]-VP[1])*mPerLat;
+  scaleM=Math.min(plan.width/Wm, plan.height/Hm)*0.92; offX=(plan.width-Wm*scaleM)/2; offY=(plan.height-Hm*scaleM)/2; }
+function ll2px(lon,lat){ return [offX+(lon-VP[0])*mPerLon*scaleM, offY+(VP[3]-lat)*mPerLat*scaleM]; }
+function px2ll(x,y){ return [VP[0]+(x-offX)/scaleM/mPerLon, VP[3]-(y-offY)/scaleM/mPerLat]; }
+const COLORS={fairway:'#96c868',tee:'#76b078',green:'#c6e280',bunker:'#eedeaa',water:'#3a7cbe',road:'#606068',cartpath:'#d4c8b4',rail:'#46464e'};
+function midLL(pts){ // arc-length midpoint in lon/lat
+  if(pts.length<2)return pts[0]; let seg=[],tot=0;
+  for(let i=0;i<pts.length-1;i++){const d=Math.hypot((pts[i+1][0]-pts[i][0])*mPerLon,(pts[i+1][1]-pts[i][1])*mPerLat);seg.push(d);tot+=d;}
+  let half=tot/2,acc=0; for(let i=0;i<seg.length;i++){if(acc+seg[i]>=half){const f=seg[i]?(half-acc)/seg[i]:0;return [pts[i][0]+f*(pts[i+1][0]-pts[i][0]),pts[i][1]+f*(pts[i+1][1]-pts[i][1])];}acc+=seg[i];} return pts[pts.length-1];
+}
+function enterEdit(guess){
+  VP=expand(guess,1.7); cropLL=expand(guess,1.5);   // default crop = 1.5x the guess; view a bit wider
+  editing=true; document.getElementById('editpanel').style.display='block'; document.getElementById('donepanel').style.display='none';
+  document.getElementById('plan').style.display='block'; if(renderer) renderer.domElement.style.display='none';
+  setStatus('<span class="spin"></span>loading course map…','#9fd'); feats={}; labels=[];
+  workerReady ? worker.postMessage({type:'features',bbox:VP}) : (pendingFeatures=VP);
+}
+function onFeatures(m){
+  feats=m.feats||{}; labels=(m.holes||[]).filter(h=>h.num).map(h=>{const ll=midLL(h.pts);return {num:h.num,pts:h.pts,lon:ll[0],lat:ll[1],del:false};});
+  setStatus(labels.length+' holes · drag to adjust, then Generate','#9a9ab0'); fitPlan(); drawPlan();
+}
+function drawPolys(list,fill){ if(!list)return; px.fillStyle=fill; list.forEach(w=>{ if(w.length<3)return; px.beginPath(); w.forEach((p,i)=>{const q=ll2px(p[0],p[1]); i?px.lineTo(q[0],q[1]):px.moveTo(q[0],q[1]);}); px.closePath(); px.fill(); }); }
+function drawLines(list,stroke,wd){ if(!list)return; px.strokeStyle=stroke; px.lineWidth=wd; list.forEach(w=>{ px.beginPath(); w.forEach((p,i)=>{const q=ll2px(p[0],p[1]); i?px.lineTo(q[0],q[1]):px.moveTo(q[0],q[1]);}); px.stroke(); }); }
+function drawPlan(){
+  if(!editing||!VP)return; px.clearRect(0,0,plan.width,plan.height);
+  px.fillStyle='#1a2a22'; px.fillRect(0,0,plan.width,plan.height);
+  drawPolys(feats.water,'#2b5c86'); drawPolys(feats.fairway,COLORS.fairway); drawPolys(feats.tee,COLORS.tee);
+  drawPolys(feats.bunker,COLORS.bunker); drawPolys(feats.green,COLORS.green);
+  drawLines(feats.road,COLORS.road,3); drawLines(feats.rail,COLORS.rail,2); drawLines(feats.cartpath,COLORS.cartpath,2);
+  // crop box: dim outside
+  const a=ll2px(cropLL[0],cropLL[3]), b=ll2px(cropLL[2],cropLL[1]); const x0=a[0],y0=a[1],x1=b[0],y1=b[1];
+  px.fillStyle='rgba(8,10,14,0.55)'; px.fillRect(0,0,plan.width,y0); px.fillRect(0,y1,plan.width,plan.height-y1); px.fillRect(0,y0,x0,y1-y0); px.fillRect(x1,y0,plan.width-x1,y1-y0);
+  px.strokeStyle='#5cc8ff'; px.lineWidth=2; px.strokeRect(x0,y0,x1-x0,y1-y0);
+  [[x0,y0],[x1,y0],[x0,y1],[x1,y1],[(x0+x1)/2,y0],[(x0+x1)/2,y1],[x0,(y0+y1)/2],[x1,(y0+y1)/2]].forEach(h=>{px.fillStyle='#5cc8ff';px.fillRect(h[0]-5,h[1]-5,10,10);});
+  // hole number markers
+  px.font='bold 13px sans-serif'; px.textAlign='center'; px.textBaseline='middle';
+  labels.forEach((L,i)=>{ if(L.del)return; const q=ll2px(L.lon,L.lat);
+    px.fillStyle='rgba(255,255,255,0.92)'; px.beginPath(); px.arc(q[0],q[1],11,0,7); px.fill();
+    px.fillStyle='#11151a'; px.fillText(L.num,q[0],q[1]);
+    px.fillStyle='#e0444a'; px.beginPath(); px.arc(q[0]+11,q[1]-11,6,0,7); px.fill(); px.fillStyle='#fff'; px.font='bold 10px sans-serif'; px.fillText('✕',q[0]+11,q[1]-11); px.font='bold 13px sans-serif'; });
+}
+function cropHandleAt(x,y){ const a=ll2px(cropLL[0],cropLL[3]),b=ll2px(cropLL[2],cropLL[1]); const x0=a[0],y0=a[1],x1=b[0],y1=b[1];
+  const H={'nw':[x0,y0],'ne':[x1,y0],'sw':[x0,y1],'se':[x1,y1],'n':[(x0+x1)/2,y0],'s':[(x0+x1)/2,y1],'w':[x0,(y0+y1)/2],'e':[x1,(y0+y1)/2]};
+  for(const k in H){ if(Math.abs(x-H[k][0])<8&&Math.abs(y-H[k][1])<8) return k; }
+  if(x>x0&&x<x1&&y>y0&&y<y1) return 'move'; return null;
+}
+plan.addEventListener('pointerdown',e=>{ const r=plan.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
+  for(let i=0;i<labels.length;i++){ if(labels[i].del)continue; const q=ll2px(labels[i].lon,labels[i].lat);
+    if(Math.hypot(x-(q[0]+11),y-(q[1]-11))<8){ labels[i].del=true; drawPlan(); return; }       // ✕ delete
+    if(Math.hypot(x-q[0],y-q[1])<12){ drag={kind:'label',idx:i}; return; } }
+  const h=cropHandleAt(x,y); if(h){ drag={kind:'crop',h,sx:x,sy:y,start:cropLL.slice()}; } });
+plan.addEventListener('pointermove',e=>{ if(!drag)return; const r=plan.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
+  if(drag.kind==='label'){ const ll=px2ll(x,y); labels[drag.idx].lon=ll[0]; labels[drag.idx].lat=ll[1]; drawPlan(); return; }
+  const ll=px2ll(x,y), c=cropLL; const h=drag.h;
+  if(h==='move'){ const s=drag.start, d0=px2ll(drag.sx,drag.sy); const dlon=ll[0]-d0[0],dlat=ll[1]-d0[1]; cropLL=[s[0]+dlon,s[1]+dlat,s[2]+dlon,s[3]+dlat]; }
+  else { if(h.includes('w'))c[0]=Math.min(ll[0],c[2]-0.0005); if(h.includes('e'))c[2]=Math.max(ll[0],c[0]+0.0005);
+         if(h.includes('n'))c[3]=Math.max(ll[1],c[1]+0.0005); if(h.includes('s'))c[1]=Math.min(ll[1],c[3]-0.0005); }
+  drawPlan(); });
+addEventListener('pointerup',()=>{drag=null;});
+
+// ---------- build (worker) ----------
+let workerReady=false,tStart=0,pendingFeatures=null;
 const worker=new Worker('worker.js');
-worker.onmessage=(ev)=>{
-  const m=ev.data;
-  if(m.type==='ready'){ workerReady=true; const b=document.getElementById('go'); b.disabled=false; b.textContent='Generate golf board';
-    setStatus('ready','#7a7a90'); maybeAutorun(); }
+worker.onmessage=(ev)=>{ const m=ev.data;
+  if(m.type==='ready'){ workerReady=true; if(pendingFeatures){worker.postMessage({type:'features',bbox:pendingFeatures});pendingFeatures=null;} afterReady(); }
+  else if(m.type==='features'){ onFeatures(m); }
   else if(m.type==='progress'){ setStatus('<span class="spin"></span>'+m.msg,'#9fd'); log(m.msg); }
-  else if(m.type==='error'){ setStatus('✕ '+m.msg,'#ff8a8a'); log('ERROR: '+m.msg); endBusy(); }
+  else if(m.type==='error'){ setStatus('✕ '+m.msg,'#ff8a8a'); document.getElementById('gen').disabled=false; }
   else if(m.type==='done'){
-    showObjects(m.objects);
-    lastPreview=m.preview||null;
-    const blob=new Blob([m.tmf],{type:'model/3mf'});
-    document.getElementById('dla').href=URL.createObjectURL(blob);
-    document.getElementById('dl').style.display='block';
-    let tri=0; m.objects.forEach(o=>tri+=o.ntri);
-    const secs=((performance.now()-tStart)/1000).toFixed(1);
-    setStatus('✓ done in '+secs+'s · '+tri.toLocaleString()+' tris','#7CFC9A');
-    log('built '+m.objects.length+' objects, '+tri.toLocaleString()+' tris, board '+m.board.join('×')+' mm — build '+(m.buildMs/1000).toFixed(1)+'s, total '+secs+'s');
-    endBusy();
-  }
+    showObjects(m.objects); lastPreview=m.preview||null; editing=false;
+    document.getElementById('plan').style.display='none'; renderer.domElement.style.display='block';
+    document.getElementById('editpanel').style.display='none'; document.getElementById('donepanel').style.display='block';
+    const blob=new Blob([m.tmf],{type:'model/3mf'}); document.getElementById('dla').href=URL.createObjectURL(blob); document.getElementById('dl').style.display='block';
+    let tri=0;m.objects.forEach(o=>tri+=o.ntri); setStatus('✓ done in '+((performance.now()-tStart)/1000).toFixed(1)+'s · '+tri.toLocaleString()+' tris','#7CFC9A');
+    document.getElementById('gen').disabled=false;
+  }};
+document.getElementById('gen').onclick=()=>{
+  if(!workerReady)return; const ex=parseFloat(document.getElementById('ex').value);
+  const holes=labels.filter(L=>!L.del).map(L=>({pts:L.pts,num:L.num,lx:L.lon,ly:L.lat}));
+  document.getElementById('gen').disabled=true; setStatus('<span class="spin"></span>building…','#9fd'); tStart=performance.now();
+  worker.postMessage({type:'generate',bbox:cropLL,exag:ex,holes});
 };
-function endBusy(){ const b=document.getElementById('go'); b.disabled=false; b.textContent='Generate golf board'; }
-function generate(){
-  if(!workerReady) return;
-  const [w,s,e,n]=document.getElementById('bb').value.split(',').map(Number);
-  const ex=parseFloat(document.getElementById('ex').value);
-  const b=document.getElementById('go'); b.disabled=true; b.textContent='⟳ working…';
-  setStatus('<span class="spin"></span>starting…','#9fd');
-  tStart=performance.now(); log('generating…');
-  worker.postMessage({type:'generate', bbox:[w,s,e,n], exag:ex});
-}
-document.getElementById('go').onclick=generate;
+document.getElementById('edit').onclick=()=>{ editing=true; document.getElementById('plan').style.display='block'; renderer.domElement.style.display='none'; document.getElementById('donepanel').style.display='none'; document.getElementById('editpanel').style.display='block'; fitPlan(); drawPlan(); };
 
+// ---------- publish ----------
 async function publish(){
-  if(!group){ setStatus('generate a board first','#ffb86b'); return; }
-  const name=prompt('Name this board:',(document.querySelector('h1').textContent||'').replace(/^⛳\s*/,'').trim()||'My board'); if(!name) return;
+  if(!group){setStatus('generate first','#ffb86b');return;}
+  const name=prompt('Name this board:',(document.getElementById('h1').textContent||'').replace(/^⛳\s*/,'').trim()||'My board'); if(!name)return;
   const handle=prompt('Your name/handle (optional):','')||'';
-  const tc=document.createElement('canvas'); tc.width=480; tc.height=360;
-  tc.getContext('2d').drawImage(renderer.domElement,0,0,tc.width,tc.height);
-  const [w,s,e,n]=document.getElementById('bb').value.split(',').map(Number);
+  const tc=document.createElement('canvas'); tc.width=480;tc.height=360; tc.getContext('2d').drawImage(renderer.domElement,0,0,tc.width,tc.height);
   setStatus('<span class="spin"></span>publishing…','#9fd');
-  try{
-    const r=await (await fetch('/api/designs',{method:'POST',body:JSON.stringify({
-      type:'golf', name, place:lastPlace, bbox:[w,s,e,n],
-      params:{exag:parseFloat(document.getElementById('ex').value)}, handle, thumb:tc.toDataURL('image/png')})})).json();
-    if(r.id){
-      if(lastPreview) await fetch('/api/designs/'+r.id+'/mesh',{method:'POST',body:lastPreview});  // precomputed geometry
-      setStatus('✓ published — <a href="/" style="color:#7dd3fc">view in gallery</a>','#7CFC9A');
-    } else setStatus('publish failed','#ff8a8a');
-  }catch(e){ setStatus('publish failed: '+e.message,'#ff8a8a'); }
+  try{ const r=await (await fetch('/api/designs',{method:'POST',body:JSON.stringify({type:'golf',name,place:lastPlace,bbox:cropLL,params:{exag:parseFloat(document.getElementById('ex').value)},handle,thumb:tc.toDataURL('image/png')})})).json();
+    if(r.id){ if(lastPreview) await fetch('/api/designs/'+r.id+'/mesh',{method:'POST',body:lastPreview}); setStatus('✓ published — <a href="/">view in gallery</a>','#7CFC9A'); }
+    else setStatus('publish failed','#ff8a8a'); }catch(e){ setStatus('publish failed: '+e.message,'#ff8a8a'); }
 }
-async function applyParams(){
-  if(params.get('bbox')) document.getElementById('bb').value=params.get('bbox');
-  if(params.get('name')) document.querySelector('h1').textContent='⛳ '+params.get('name');
-  if(params.get('q')){ document.getElementById('q').value=params.get('q'); doSearch(); }
-  if(params.get('design')){
-    try{ const d=await (await fetch('/api/designs/'+params.get('design'))).json();
-      document.getElementById('bb').value=d.bbox.join(',');
-      if(d.params&&d.params.exag!=null) document.getElementById('ex').value=d.params.exag;
-      document.querySelector('h1').textContent='⛳ '+d.name; lastPlace=d.place||'';
-      wantAutorun=true;
-    }catch(e){ log('could not load design'); }
-  }
-  maybeAutorun();
-}
-initView();
 document.getElementById('pub').onclick=publish;
+
+// ---------- entry ----------
+function afterReady(){ /* nothing extra; features fired on enterEdit */ }
+initView();
 setStatus('<span class="spin"></span>loading engine…','#9fd');
-log('loading Pyodide in background worker…');
-applyParams();
+(async()=>{
+  if(params.get('design')){ try{ const d=await (await fetch('/api/designs/'+params.get('design'))).json();
+    document.getElementById('h1').textContent='⛳ '+d.name; lastPlace=d.place||''; if(d.params&&d.params.exag!=null)document.getElementById('ex').value=d.params.exag;
+    enterEdit(d.bbox); }catch(e){ log('could not load design'); } }
+  else if(params.get('bbox')){ enterEdit(params.get('bbox').split(',').map(Number)); }
+  else if(params.get('q')){ document.getElementById('q').value=params.get('q'); doSearch(); }
+})();
 </script></body></html>

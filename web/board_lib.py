@@ -40,7 +40,8 @@ def _point_at(pts, frac):
 
 
 def _declutter(labels, min_d, nx, ny, iters=80):
-    """Nudge labels [num, x, y] apart so none sit closer than min_d (simple relaxation)."""
+    """Nudge labels [num, x, y, fixed] apart so none sit closer than min_d. Fixed
+    (user-placed) labels are not moved; only auto labels relax around them."""
     for _ in range(iters):
         moved = False
         for i in range(len(labels)):
@@ -50,10 +51,17 @@ def _declutter(labels, min_d, nx, ny, iters=80):
                 if d < min_d:
                     if d < 1e-6:
                         dx, dy, d = 1.0, 0.0, 1.0          # exact overlap -> arbitrary push
-                    push = (min_d - d) / 2
-                    ux, uy = dx / d, dy / d
-                    labels[i][1] -= ux * push; labels[i][2] -= uy * push
-                    labels[j][1] += ux * push; labels[j][2] += uy * push
+                    fi, fj = labels[i][3], labels[j][3]
+                    if fi and fj:
+                        continue
+                    ux, uy, g = dx / d, dy / d, min_d - d
+                    if fi:
+                        labels[j][1] += ux * g; labels[j][2] += uy * g
+                    elif fj:
+                        labels[i][1] -= ux * g; labels[i][2] -= uy * g
+                    else:
+                        labels[i][1] -= ux * g / 2; labels[i][2] -= uy * g / 2
+                        labels[j][1] += ux * g / 2; labels[j][2] += uy * g / 2
                     moved = True
         if not moved:
             break
@@ -202,13 +210,16 @@ def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
             labels = []
             for h in holes:
                 num = str(h.get("num") or "").strip()
-                if num:
-                    mx, my = place([ll_px(lo, la) for lo, la in h["pts"]])
-                    labels.append([num, mx, my])
+                if not num:
+                    continue
+                if h.get("lx") is not None and h.get("ly") is not None:   # user-placed
+                    x, y = ll_px(h["lx"], h["ly"]); labels.append([num, x, y, True])
+                else:
+                    mx, my = place([ll_px(lo, la) for lo, la in h["pts"]]); labels.append([num, mx, my, False])
             _declutter(labels, fpx * 1.5, nxb, nyb)        # push apart if too close
             nimg = Image.new("L", (nxb, nyb), 0); nd = ImageDraw.Draw(nimg)
-            for num, x, y in labels:
-                nd.text((x, y), num, font=font, fill=1, anchor="mm")
+            for L in labels:
+                nd.text((L[1], L[2]), L[0], font=font, fill=1, anchor="mm")
             nmask = np.array(nimg) > 0
             if nmask.any():
                 V, F = _mesh(nmask, Zt + 1.1, Zt - EMBED, BH, P)

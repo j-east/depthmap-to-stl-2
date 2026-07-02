@@ -24,17 +24,23 @@ async function fetchDEM(w,s,e,n){
 // ---- OSM Overpass (mirrors, fall through on timeout) ----
 const OVERPASS=['https://overpass-api.de/api/interpreter',
                 'https://overpass.kumi.systems/api/interpreter',
-                'https://overpass.private.coffee/api/interpreter'];
+                'https://overpass.private.coffee/api/interpreter',
+                'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+                'https://overpass.osm.ch/api/interpreter'];
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function overpass(ql){
   let last;
-  for(const ep of OVERPASS){
-    try{
-      const ctl=new AbortController(), to=setTimeout(()=>ctl.abort(),30000);
-      const r=await fetch(ep,{method:'POST',body:'data='+encodeURIComponent(ql),signal:ctl.signal});
-      clearTimeout(to); if(!r.ok) throw new Error('HTTP '+r.status); return await r.json();
-    }catch(e){ last=e; postMessage({type:'progress',msg:'Overpass '+ep.split('/')[2]+' failed, trying next'}); }
+  for(let round=0; round<3; round++){               // retry the whole pool; mirrors recover quickly
+    for(const ep of OVERPASS){
+      try{
+        const ctl=new AbortController(), to=setTimeout(()=>ctl.abort(),30000);
+        const r=await fetch(ep,{method:'POST',body:'data='+encodeURIComponent(ql),signal:ctl.signal});
+        clearTimeout(to); if(!r.ok) throw new Error('HTTP '+r.status); return await r.json();
+      }catch(e){ last=e; postMessage({type:'progress',msg:'Overpass '+ep.split('/')[2]+' busy, trying next…'}); }
+    }
+    await sleep(1500*(round+1));
   }
-  throw new Error('all Overpass mirrors failed ('+(last&&last.message)+')');
+  throw new Error('all Overpass mirrors busy — try again in a moment ('+(last&&last.message)+')');
 }
 const LAYER={fairway:'fairway',tee:'tee',green:'green',bunker:'bunker',water_hazard:'water',lateral_water_hazard:'water'};
 const RAIL=['rail','light_rail','tram','narrow_gauge','subway'];
@@ -72,19 +78,28 @@ function packMesh(objsMap){
 }
 
 onmessage = async (ev)=>{
-  const m=ev.data; if(m.type!=='generate') return;
+  const m=ev.data;
+  if(m.type==='features'){           // for the pre-render edit step (plan + holes), no build
+    await ready;
+    try{ const [w,s,e,n]=m.bbox; const ff=await fetchFeatures(w,s,e,n);
+      postMessage({type:'features', feats:ff.feats, holes:ff.holes, bbox:m.bbox}); }
+    catch(err){ postMessage({type:'error', msg:err.message}); }
+    return;
+  }
+  if(m.type!=='generate') return;
   await ready;
   const t0=Date.now();
   try{
     const [w,s,e,n]=m.bbox;
     postMessage({type:'progress',msg:'fetching terrain + OSM…'});
     const [dem,ff]=await Promise.all([fetchDEM(w,s,e,n), fetchFeatures(w,s,e,n)]);
+    const holes=m.holes||ff.holes;   // m.holes = user-edited labels (moved/deleted) from the edit step
     const counts=Object.fromEntries(Object.entries(ff.feats).map(([k,v])=>[k,v.length]));
-    postMessage({type:'progress',msg:`DEM ${dem.W}x${dem.H}, ${ff.holes.length} holes, ${JSON.stringify(counts)} (${((Date.now()-t0)/1000).toFixed(1)}s)`});
+    postMessage({type:'progress',msg:`DEM ${dem.W}x${dem.H}, ${holes.length} holes, ${JSON.stringify(counts)} (${((Date.now()-t0)/1000).toFixed(1)}s)`});
     const t1=Date.now();
     pyodide.globals.set('dem_bytes',dem.bytes);
     pyodide.globals.set('feats_json',JSON.stringify(ff.feats));
-    pyodide.globals.set('holes_json',JSON.stringify(ff.holes));
+    pyodide.globals.set('holes_json',JSON.stringify(holes));
     pyodide.globals.set('font_bytes',FONT);
     const res=pyodide.runPython(`golf_board(dem_bytes,0,0,[${w},${s},${e},${n}],feats_json,${m.exag},8.0,holes_json,font_bytes)`);
     const out=res.toJs(); res.destroy();

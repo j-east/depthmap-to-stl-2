@@ -1,68 +1,134 @@
 <!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Terrain Maps — 3D-printable boards of any place</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  *{box-sizing:border-box} body{margin:0;background:#0d1015;color:#e7e7ef;font:15px -apple-system,system-ui,sans-serif}
+  *{box-sizing:border-box}
+  :root{--bg:#0a0d13;--panel:#12161f;--line:#1e2433;--ink:#e8eaf2;--dim:#8b93a8;--green:#7fb069;--blue:#2563eb}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,system-ui,sans-serif}
+  h1,h2,h3,.brand{font-family:'Space Grotesk',-apple-system,sans-serif}
   a{color:inherit;text-decoration:none}
-  header{padding:14px 22px;display:flex;align-items:center;gap:16px;border-bottom:1px solid #1e2230;position:sticky;top:0;background:#0d1015cc;backdrop-filter:blur(8px);z-index:5}
-  .brand{font-weight:700;font-size:17px} .brand span{color:#6b9a52}
-  .search{flex:1;max-width:520px;display:flex;gap:8px}
-  .search input{flex:1;background:#181c26;border:1px solid #2a3040;color:#fff;border-radius:9px;padding:9px 12px;font-size:14px}
-  .btn{background:#2563eb;color:#fff;border:0;border-radius:9px;padding:9px 15px;font-size:14px;cursor:pointer;white-space:nowrap}
-  .btn.ghost{background:#1c2230;border:1px solid #2a3040}
+  /* faint contour-line texture over the whole page */
+  body::before{content:'';position:fixed;inset:0;pointer-events:none;opacity:.5;z-index:0;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='420' viewBox='0 0 420 420'%3E%3Cg fill='none' stroke='%23202b40' stroke-width='1'%3E%3Cpath d='M-20 60 Q 90 10 180 70 T 440 50'/%3E%3Cpath d='M-20 130 Q 100 80 200 140 T 440 120'/%3E%3Cpath d='M-20 210 Q 80 170 190 220 T 440 200'/%3E%3Cpath d='M-20 290 Q 110 240 210 300 T 440 280'/%3E%3Cpath d='M-20 370 Q 90 330 200 380 T 440 360'/%3E%3C/g%3E%3C/svg%3E");
+    -webkit-mask-image:linear-gradient(180deg,#000 0%,#0006 40%,transparent 85%);mask-image:linear-gradient(180deg,#000 0%,#0006 40%,transparent 85%)}
+  header,main,footer{position:relative;z-index:1}
 
-  /* ---- Featured (taller, framed, clearly its own band) ---- */
-  .featured{padding:26px 22px 30px;background:radial-gradient(120% 120% at 50% 0%,#161c28 0%,#0d1015 70%);border-bottom:1px solid #222a3a}
-  .eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#7fb98a;margin-bottom:10px}
-  .hero{position:relative;height:64vh;min-height:600px;border-radius:16px;overflow:hidden;background:#0f1319;
-        border:1px solid #28324a;box-shadow:0 18px 50px -20px #000,inset 0 0 0 1px #ffffff08}
-  #heroCanvas{width:100%;height:100%;display:block}
-  .hero .thumb{position:absolute;inset:0;background-size:cover;background-position:center;transition:opacity .5s}
-  .hero .info{position:absolute;left:22px;bottom:18px;text-shadow:0 2px 16px #000}
-  .hero .info h2{margin:2px 0 4px;font-size:28px} .hero .info .sub{color:#c7c7d6;font-size:14px}
-  .hero .cta{position:absolute;right:20px;bottom:18px;display:flex;gap:8px}
-  .hero .loading{position:absolute;top:14px;right:18px;font-size:12px;color:#8a94ad}
+  header{padding:14px 26px;display:flex;align-items:center;gap:18px;position:sticky;top:0;z-index:10;
+    background:#0a0d13d9;backdrop-filter:blur(10px);border-bottom:1px solid #171d2a}
+  .brand{font-weight:700;font-size:18px;letter-spacing:-.01em;display:flex;align-items:center;gap:9px}
+  .brand .mk{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;font-size:15px;
+    background:linear-gradient(135deg,#1d2b1e,#14202e);border:1px solid #2a3a2c}
+  .brand span{color:var(--green)}
+  .search{flex:1;max-width:560px;display:flex;gap:8px}
+  .searchbox{flex:1;display:flex;align-items:center;gap:9px;background:#141926;border:1px solid #262e42;border-radius:11px;padding:0 13px;transition:border-color .15s,box-shadow .15s}
+  .searchbox:focus-within{border-color:#3b82f6;box-shadow:0 0 0 3px #2563eb33}
+  .searchbox svg{flex:none;opacity:.45}
+  .searchbox input{flex:1;background:none;border:0;outline:0;color:#fff;padding:10px 0;font-size:14px}
+  .btn{background:var(--blue);color:#fff;border:0;border-radius:10px;padding:10px 16px;font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap;transition:filter .12s,transform .05s}
+  .btn:hover{filter:brightness(1.13)} .btn:active{transform:translateY(1px)}
+  .btn.ghost{background:#ffffff10;border:1px solid #2c3548;font-weight:500}
+  .btn.ghost:hover{background:#ffffff1a}
+  .btn.create{background:linear-gradient(135deg,#3f7f3f,#2f6b56);box-shadow:0 2px 14px -4px #2f6b5688}
 
-  /* ---- Browse (distinct section) ---- */
+  /* ---- Featured band ---- */
+  .featured{padding:34px 26px 40px;background:
+      radial-gradient(90% 130% at 50% -10%,#15203280 0%,transparent 60%),
+      linear-gradient(180deg,transparent,#0a0d13);border-bottom:1px solid #171d2a}
+  .fwrap{max-width:1400px;margin:0 auto}
+  .tagline{margin:4px 2px 24px;display:flex;align-items:flex-end;justify-content:space-between;gap:24px;flex-wrap:wrap}
+  .tagline h1{margin:0;font-size:clamp(26px,3.6vw,42px);line-height:1.12;letter-spacing:-.02em;font-weight:700;max-width:640px}
+  .tagline h1 em{font-style:normal;background:linear-gradient(90deg,#9ed08a,#5fb0c9);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .tagline .sub{color:var(--dim);font-size:15px;max-width:420px;margin:0 0 6px}
+  .hero{position:relative;height:62vh;min-height:560px;border-radius:20px;overflow:hidden;
+        background:radial-gradient(120% 90% at 50% 105%,#13233a 0%,#0c1420 45%,#080b12 100%);
+        border:1px solid #24304a;box-shadow:0 30px 80px -30px #000,0 0 0 1px #ffffff06 inset;
+        animation:rise .6s ease both}
+  @keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+  /* soft glow pedestal under the board */
+  .hero::before{content:'';position:absolute;left:50%;bottom:6%;width:70%;height:34%;transform:translateX(-50%);
+    background:radial-gradient(50% 50% at 50% 50%,#2f557d77,transparent 70%);pointer-events:none}
+  #heroCanvas{width:100%;height:100%;display:block;opacity:0;transition:opacity .8s}
+  #heroCanvas.on{opacity:1}
+  .hero .thumb{position:absolute;inset:0;background-size:cover;background-position:center;transition:opacity .6s;filter:saturate(1.05)}
+  .hero .scrim{position:absolute;inset:auto 0 0 0;height:190px;background:linear-gradient(180deg,transparent,#070a10e6);pointer-events:none}
+  .hero .tag{position:absolute;top:16px;left:18px;font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+    color:#a9d896;background:#0d160fd0;border:1px solid #2c4030;border-radius:20px;padding:6px 12px;backdrop-filter:blur(4px)}
+  .hero .hint{position:absolute;top:16px;right:18px;font-size:12px;color:#6b7590;background:#0b0f18c0;border:1px solid #1f2636;border-radius:20px;padding:6px 12px;backdrop-filter:blur(4px)}
+  .hero .info{position:absolute;left:24px;right:24px;bottom:20px;display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap}
+  .hero .info h2{margin:0 0 3px;font-size:clamp(22px,2.6vw,32px);letter-spacing:-.01em;text-shadow:0 2px 18px #000}
+  .hero .info .sub{color:#aeb6c9;font-size:14px;text-shadow:0 1px 10px #000;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .hero .info .sub .vc{color:#cfe3c2;background:#16241a99;border:1px solid #2c4030;border-radius:14px;padding:2px 10px;font-size:12.5px}
+  .hero .cta{display:flex;gap:9px}
+
+  /* ---- Browse ---- */
   .browse{max-width:1400px;margin:0 auto}
-  .browsehead{display:flex;align-items:center;gap:10px;padding:22px 22px 8px;flex-wrap:wrap}
-  .browsehead h3{margin:0;font-size:18px}
-  .tab{background:#161a24;border:1px solid #262c3b;color:#cfd;border-radius:20px;padding:6px 14px;cursor:pointer;font-size:13px}
-  .tab.on{background:#23314e;border-color:#2563eb;color:#fff}
-  .chip{background:#161a24;border:1px solid #262c3b;border-radius:20px;padding:6px 12px;cursor:pointer;font-size:13px;color:#9aa}
-  .chip.on{background:#1f2b22;border-color:#6b9a52;color:#cfe}
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:18px;padding:10px 22px 70px}
-  .card{background:#141822;border:1px solid #232838;border-radius:12px;overflow:hidden;cursor:pointer;transition:transform .08s,border-color .08s}
-  .card:hover{transform:translateY(-2px);border-color:#3a455f}
-  .card .ph{aspect-ratio:4/3;background:linear-gradient(135deg,#1a2230,#222a18);display:flex;align-items:center;justify-content:center;color:#56607a;font-size:12px}
-  .card img{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;background:#11151a}
-  .card .m{padding:9px 11px} .card .m h3{margin:0;font-size:14px}
+  .browsehead{display:flex;align-items:center;gap:10px;padding:30px 26px 12px;flex-wrap:wrap}
+  .browsehead h3{margin:0 6px 0 0;font-size:19px;letter-spacing:-.01em}
+  .tab,.chip{background:#141926;border:1px solid #242c40;border-radius:20px;padding:7px 15px;cursor:pointer;font-size:13px;color:#aab2c6;transition:all .13s;user-select:none}
+  .tab:hover,.chip:hover{border-color:#39445f;color:#dfe4ef}
+  .tab.on{background:#1c2c4e;border-color:#3b62c4;color:#fff}
+  .chip.on{background:#182618;border-color:#4d7a44;color:#d3edc6}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:18px;padding:12px 26px 60px}
+  .card{background:var(--panel);border:1px solid #212940;border-radius:14px;overflow:hidden;cursor:pointer;
+    transition:transform .14s,border-color .14s,box-shadow .14s;animation:rise .45s ease both}
+  .card:hover{transform:translateY(-3px);border-color:#3d5a3f;box-shadow:0 14px 34px -16px #000,0 0 0 1px #7fb06922}
+  .card .tw{position:relative;aspect-ratio:4/3;overflow:hidden;background:radial-gradient(100% 100% at 50% 110%,#15202f,#0d1119)}
+  .card img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .35s ease}
+  .card:hover img{transform:scale(1.045)}
+  .card .tw::after{content:'';position:absolute;inset:auto 0 0 0;height:44%;background:linear-gradient(180deg,transparent,#0c101899);pointer-events:none}
+  .card .ph{position:absolute;inset:0;display:grid;place-items:center;color:#4c566e;font-size:12px}
+  .card .m{padding:11px 13px 12px} .card .m h3{margin:0;font-size:14.5px;font-weight:600}
   .card .m .p{color:#7a829a;font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .card .m .r{display:flex;align-items:center;justify-content:space-between;margin-top:8px}
-  .badge{font-size:11px;background:#1d2533;border-radius:6px;padding:2px 7px;color:#9fb}
-  .vote{display:flex;align-items:center;gap:5px;background:#1a1f2b;border:1px solid #2a3142;border-radius:8px;padding:4px 9px;font-size:13px;color:#cdd;cursor:pointer}
-  .vote.voted{background:#23314e;border-color:#2563eb;color:#fff}
-  .empty{padding:40px 22px;color:#7a829a}
+  .card .m .r{display:flex;align-items:center;justify-content:space-between;margin-top:9px}
+  .badge{font-size:11px;background:#18251a;border:1px solid #27402a;border-radius:14px;padding:3px 9px;color:#a9d896}
+  .vote{display:flex;align-items:center;gap:6px;background:#171c29;border:1px solid #293350;border-radius:16px;padding:4px 11px;font-size:13px;color:#c6cddd;cursor:pointer;transition:all .13s}
+  .vote:hover{border-color:#3b62c4;color:#fff}
+  .vote.voted{background:#1c2c4e;border-color:#3b62c4;color:#fff}
+  .card.new{border-style:dashed;border-color:#2c3550;background:#0f131d}
+  .card.new:hover{border-color:#4d7a44}
+  .empty{padding:48px 26px;color:#7a829a;text-align:center}
+  .empty a{color:#8fd0f0}
+  /* skeletons */
+  .sk{border:1px solid #1c2336;border-radius:14px;overflow:hidden;background:var(--panel)}
+  .sk .a{aspect-ratio:4/3;background:linear-gradient(100deg,#141926 40%,#1c2333 50%,#141926 60%);background-size:220% 100%;animation:sh 1.3s infinite}
+  .sk .b{height:58px;margin:12px;border-radius:8px;background:linear-gradient(100deg,#141926 40%,#1a2130 50%,#141926 60%);background-size:220% 100%;animation:sh 1.3s infinite}
+  @keyframes sh{from{background-position:120% 0}to{background-position:-100% 0}}
+
+  footer{border-top:1px solid #171d2a;color:#5d6579;font-size:12.5px;padding:22px 26px 30px;display:flex;gap:18px;flex-wrap:wrap;justify-content:space-between;max-width:1400px;margin:0 auto}
+  footer b{color:#8b93a8;font-weight:600}
 </style></head><body>
 <header>
-  <a class="brand" href="/">⛰ Terrain<span>Maps</span></a>
+  <a class="brand" href="/"><span class="mk">⛰</span>Terrain<span>Maps</span></a>
   <form class="search" onsubmit="doSearch(event)">
-    <input id="q" placeholder="Search boards, or a place to create…" autocomplete="off">
+    <div class="searchbox">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/></svg>
+      <input id="q" placeholder="Search boards, or a place to create…" autocomplete="off">
+    </div>
     <button class="btn" type="submit">Search</button>
   </form>
-  <a class="btn ghost" href="/play">+ Create</a>
+  <a class="btn create" href="/play">+ Create</a>
 </header>
 
-<section class="featured">
-  <div class="eyebrow" id="eyebrow">✦ Featured</div>
+<main>
+<section class="featured"><div class="fwrap">
+  <div class="tagline">
+    <h1>Turn any place on Earth into a <em>3D-printed board</em>.</h1>
+    <p class="sub">Search a golf course, watch it become a full-color terrain model right in your browser, then download or order the print.</p>
+  </div>
   <div class="hero">
     <div class="thumb" id="heroThumb"></div>
     <canvas id="heroCanvas"></canvas>
-    <div class="loading" id="heroLoading">loading…</div>
-    <div class="info" id="heroInfo"></div>
-    <div class="cta" id="heroCta"></div>
+    <div class="scrim"></div>
+    <div class="tag" id="eyebrow">✦ Featured</div>
+    <div class="hint" id="heroLoading">loading board…</div>
+    <div class="info">
+      <div id="heroInfo"></div>
+      <div class="cta" id="heroCta"></div>
+    </div>
   </div>
-</section>
+</div></section>
 
 <div class="browse">
   <div class="browsehead">
@@ -74,8 +140,19 @@
     <div class="chip on" data-type="" onclick="setType(this)">All</div>
     <div class="chip" data-type="golf" onclick="setType(this)">⛳ Golf</div>
   </div>
-  <div class="grid" id="grid"></div>
+  <div class="grid" id="grid">
+    <div class="sk"><div class="a"></div><div class="b"></div></div>
+    <div class="sk"><div class="a"></div><div class="b"></div></div>
+    <div class="sk"><div class="a"></div><div class="b"></div></div>
+    <div class="sk"><div class="a"></div><div class="b"></div></div>
+  </div>
 </div>
+</main>
+
+<footer>
+  <div><b>TerrainMaps</b> — boards are generated entirely in your browser from USGS / NOAA elevation + OpenStreetMap data.</div>
+  <div>Made for printing · <a href="/play" style="color:#8fd0f0">create a board →</a></div>
+</footer>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -86,6 +163,8 @@ let sort='trending', type='';
 const TYPE_BADGE={golf:'⛳ golf',cribbage:'cribbage',town:'🗺 town',skyline:'🏙 skyline'};
 const esc=s=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const api=async p=>{const r=await fetch(p);if(!r.ok)throw new Error(p+' '+r.status);return r.json();};
+// place strings from Nominatim are long — keep the readable head
+const shortPlace=p=>(p||'').split(',').slice(1,4).map(s=>s.trim()).filter(x=>x&&!/^\d/.test(x)).slice(0,3).join(', ')||p;
 
 async function load(){
   let designs=[]; try{ designs=(await api(`/api/designs?sort=${sort}&type=${type}`)).designs; }catch(e){}
@@ -95,24 +174,26 @@ async function load(){
 }
 function renderGrid(designs){
   const g=document.getElementById('grid');
-  if(!designs.length){ g.innerHTML='<div class="empty">No boards yet — be the first to <a href="/play" style="color:#7dd3fc">create one</a>.</div>'; return; }
+  if(!designs.length){ g.innerHTML='<div class="empty" style="grid-column:1/-1">No boards yet — be the first to <a href="/play">create one</a>.</div>'; return; }
   g.innerHTML='';
-  designs.forEach(d=>{
-    const c=document.createElement('div'); c.className='card'; c.onclick=()=>location='/view?design='+d.id;
-    const thumb=d.thumb?`<img src="/thumb-design/${d.id}" loading="lazy">`:`<div class="ph">no preview</div>`;
-    c.innerHTML=thumb+`<div class="m"><h3>${esc(d.name)}</h3><div class="p">${esc(d.place||'')}</div>
+  designs.forEach((d,i)=>{
+    const c=document.createElement('div'); c.className='card'; c.style.animationDelay=(i*45)+'ms';
+    c.onclick=()=>location='/view?design='+d.id;
+    const thumb=d.thumb?`<div class="tw"><img src="/thumb-design/${d.id}" loading="lazy"></div>`
+                       :`<div class="tw"><div class="ph">no preview</div></div>`;
+    c.innerHTML=thumb+`<div class="m"><h3>${esc(d.name)}</h3><div class="p">${esc(shortPlace(d.place))}</div>
       <div class="r"><span class="badge">${TYPE_BADGE[d.type]||d.type}</span>
       <span class="vote${VOTED.has(d.id)?' voted':''}" onclick="event.stopPropagation();vote('${d.id}',this)">▲ <b>${d.votes}</b></span></div></div>`;
     g.appendChild(c);
   });
 }
 function renderHero(d){
-  document.getElementById('eyebrow').textContent = d?'✦ Featured':'✦ Featured demo';
+  document.getElementById('eyebrow').textContent = d?'✦ Featured board':'✦ Sample board';
   document.getElementById('heroInfo').innerHTML = d
-    ? `<h2>${esc(d.name)}</h2><div class="sub">${esc(d.place||'')} · ▲ ${d.votes}</div>`
-    : `<h2>The Country Club</h2><div class="sub">Brookline, MA · sample board</div>`;
+    ? `<h2>${esc(d.name)}</h2><div class="sub">${esc(shortPlace(d.place))} <span class="vc">▲ ${d.votes}</span></div>`
+    : `<h2>The Country Club</h2><div class="sub">Brookline, MA <span class="vc">sample</span></div>`;
   document.getElementById('heroCta').innerHTML = d
-    ? `<a class="btn ghost" href="/view?design=${d.id}">Open</a> <a class="btn" href="/view?design=${d.id}">Order</a>`
+    ? `<a class="btn ghost" href="/play?design=${d.id}">✎ Remix</a> <a class="btn" href="/view?design=${d.id}">Open board</a>`
     : `<a class="btn" href="/play">Create your own →</a>`;
   document.getElementById('heroThumb').style.backgroundImage = (d&&d.thumb)?`url(/thumb-design/${d.id})`:'';
   loadHeroMesh(d ? '/mesh-design/'+d.id : '/featured-demo.mesh');
@@ -127,8 +208,8 @@ function setType(t){ document.querySelectorAll('.chip').forEach(x=>x.classList.r
 async function doSearch(ev){ ev.preventDefault(); const term=document.getElementById('q').value.trim();
   let res=[]; try{ res=(await api('/api/designs?q='+encodeURIComponent(term))).designs; }catch(e){}
   renderGrid(res); const g=document.getElementById('grid');
-  const create=document.createElement('div'); create.className='card'; create.style.cssText='display:flex;align-items:center;justify-content:center;min-height:160px;border-style:dashed';
-  create.innerHTML=`<div style="text-align:center"><div style="font-size:22px">+</div>Create “${esc(term)}”</div>`;
+  const create=document.createElement('div'); create.className='card new'; create.style.cssText+='display:flex;align-items:center;justify-content:center;min-height:180px';
+  create.innerHTML=`<div style="text-align:center;color:#aab2c6"><div style="font-size:26px;color:#7fb069">+</div>Create “${esc(term)}”</div>`;
   create.onclick=()=>location='/play?q='+encodeURIComponent(term); g.prepend(create);
 }
 
@@ -144,8 +225,8 @@ function initHero(){
   renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:true});
   renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2)); renderer.setSize(el.clientWidth,el.clientHeight);
   scene=new THREE.Scene();
-  camera=new THREE.PerspectiveCamera(42,el.clientWidth/el.clientHeight,0.1,5000); camera.up.set(0,0,1); camera.position.set(142,-270,210);
-  controls=new THREE.OrbitControls(camera,cv); controls.enableDamping=true; controls.autoRotate=true; controls.autoRotateSpeed=1.0; controls.enablePan=false;
+  camera=new THREE.PerspectiveCamera(42,el.clientWidth/el.clientHeight,0.1,5000); camera.up.set(0,0,1); camera.position.set(118,-224,172);
+  controls=new THREE.OrbitControls(camera,cv); controls.enableDamping=true; controls.autoRotate=true; controls.autoRotateSpeed=0.7; controls.enablePan=false;
   scene.add(new THREE.HemisphereLight(0xffffff,0x223,0.85)); const d=new THREE.DirectionalLight(0xffffff,0.7); d.position.set(-1,-1,2); scene.add(d);
   addEventListener('resize',()=>{renderer.setSize(el.clientWidth,el.clientHeight);camera.aspect=el.clientWidth/el.clientHeight;camera.updateProjectionMatrix();});
   (function loop(){requestAnimationFrame(loop);if(controls)controls.update();renderer.render(scene,camera);})();
@@ -161,9 +242,10 @@ async function loadHeroMesh(url){
       g.add(new THREE.Mesh(geo,new THREE.MeshStandardMaterial({color:new THREE.Color(o.color),roughness:0.92,side:THREE.DoubleSide})));});
     const box=new THREE.Box3().setFromObject(g),c=box.getCenter(new THREE.Vector3()); g.position.set(-c.x,-c.y,-c.z);
     if(group)scene.remove(group); group=g; scene.add(g);
+    document.getElementById('heroCanvas').classList.add('on');
     document.getElementById('heroThumb').style.opacity='0';
-  }catch(e){ /* keep thumbnail */ }
-  document.getElementById('heroLoading').style.display='none';
+    document.getElementById('heroLoading').textContent='drag to orbit · scroll to zoom';
+  }catch(e){ document.getElementById('heroLoading').style.display='none'; /* keep thumbnail */ }
 }
 initHero(); load();
 </script></body></html>
