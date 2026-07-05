@@ -16,8 +16,9 @@ LAYERS = [("fairway",  (150, 200, 104), 0.5, "poly", 0),
           ("rail",     (70, 70, 78),   0.7, "line", 3.5),
           ("cartpath", (212, 200, 180), 0.5, "line", 2.4)]
 WATER_COLOR = (58, 124, 190)
+# ride-loop ribbon colors by kind (bike / motorcycle / scenic drive)
+ROUTE_COLORS = {"bike": (240, 118, 44), "moto": (222, 62, 62), "drive": (245, 196, 66)}
 SEA_LEVEL = 0.3          # m: cells below this are water (real bathymetry from NOAA topobathy)
-OCEAN_CLAMP_M = 18.0     # cap shown ocean depth so deep water doesn't blow out the land scale
 PITCH = 0.5          # mesh pitch (mm) — finer = more resolution
 EMBED = 0.2
 
@@ -105,7 +106,8 @@ def _mesh(mask, ztop, zbot, BH, pitch):
 
 
 def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
-               holes_json="[]", font_bytes=None, pitch=None):
+               holes_json="[]", font_bytes=None, pitch=None, route_json="[]", route_kind="bike",
+               hide_json="[]", route_w=2.4):
     P = float(pitch) if pitch else PITCH       # mesh pitch (mm); coarse for fast previews
     raw = dem_in.to_py() if hasattr(dem_in, "to_py") else dem_in
     if not ncols:                       # raw is a float32 GeoTIFF (USGS 3DEP) -> decode
@@ -117,6 +119,7 @@ def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
     if np.isnan(dem).any():
         dem = np.where(np.isnan(dem), np.nanmin(dem), dem)
     feats = json.loads(features_json)
+    hide = set(json.loads(hide_json)) if hide_json else set()
     w, s, e, n = bbox
     clat = (s + n) / 2
     Wm = (e - w) * 111320 * math.cos(math.radians(clat))
@@ -133,13 +136,13 @@ def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
     cc = np.clip((np.arange(nxb + 1) / nxb * (ncols - 1)).astype(int), 0, ncols - 1)
     samp = dem[np.ix_(rr, cc)]
     # heights relative to the lowest LAND (so inland boards aren't lifted by absolute elevation);
-    # below sea level recesses into a basin with clamped depth (real bathymetry shape).
+    # ocean recesses at the SAME vertical scale as land (true bathymetry, incl. exaggeration),
+    # floored at `recess` below base so deep water can't punch through the plate.
     land = samp >= 0.0
     datum = float(samp[land].min()) if land.any() else float(samp.min())
     recess = min(base_mm - 2.0, 6.0)
     land_z = base_mm + np.maximum(samp - datum, 0.0) * ZPM
-    depth = np.minimum(np.maximum(-samp, 0.0), OCEAN_CLAMP_M)
-    ocean_z = base_mm - depth / OCEAN_CLAMP_M * recess
+    ocean_z = base_mm - np.minimum(np.maximum(-samp, 0.0) * ZPM, recess)
     Zt = np.where(samp >= 0.0, land_z, ocean_z).astype(np.float64)
 
     def ll_px(lon, lat):
@@ -150,6 +153,8 @@ def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
     img = Image.new("L", (nxb, nyb), 0)
     dr = ImageDraw.Draw(img)
     for i, (name, color, proud, kind, width_m) in enumerate(LAYERS):
+        if name in hide:
+            continue
         for way in feats.get(name, []):
             pts = [ll_px(lo, la) for lo, la in way]
             if kind == "poly" and len(pts) >= 3:
@@ -168,22 +173,47 @@ def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
             objects.append((name, color, V, F))
 
     # water: OSM water polygons + ocean (DEM at/below sea level), flat blue, where no turf
-    crr = np.clip(((np.arange(nyb) + 0.5) / nyb * (nrows - 1)).astype(int), 0, nrows - 1)
-    ccc = np.clip(((np.arange(nxb) + 0.5) / nxb * (ncols - 1)).astype(int), 0, ncols - 1)
-    cell = dem[np.ix_(crr, ccc)]
-    wimg = Image.new("L", (nxb, nyb), 0); wd = ImageDraw.Draw(wimg)
-    for way in feats.get("water", []):
-        pts = [ll_px(lo, la) for lo, la in way]
-        if len(pts) >= 3:
-            wd.polygon(pts, fill=1)
-    # water = below sea level (ocean, with real depth) + OSM lakes/ponds; blue, following Zt
-    water = ((np.array(wimg) > 0) | (cell < SEA_LEVEL)) & (lbl == 0)
-    if water.any():
-        V, F = _mesh(water, Zt + 0.15, Zt - EMBED, BH, P)
-        objects.append(("water", WATER_COLOR, V, F))
+    water = np.zeros((nyb, nxb), bool)
+    if "water" not in hide:
+        crr = np.clip(((np.arange(nyb) + 0.5) / nyb * (nrows - 1)).astype(int), 0, nrows - 1)
+        ccc = np.clip(((np.arange(nxb) + 0.5) / nxb * (ncols - 1)).astype(int), 0, ncols - 1)
+        cell = dem[np.ix_(crr, ccc)]
+        wimg = Image.new("L", (nxb, nyb), 0); wd = ImageDraw.Draw(wimg)
+        for way in feats.get("water", []):
+            pts = [ll_px(lo, la) for lo, la in way]
+            if len(pts) >= 3:
+                wd.polygon(pts, fill=1)
+        # water = below sea level (ocean, with real depth) + OSM lakes/ponds; blue, following Zt
+        water = ((np.array(wimg) > 0) | (cell < SEA_LEVEL)) & (lbl == 0)
+        if water.any():
+            V, F = _mesh(water, Zt + 0.15, Zt - EMBED, BH, P)
+            objects.append(("water", WATER_COLOR, V, F))
+
+    # ride route: bold ribbon following the terrain, proud of everything else,
+    # with a raised start-marker disc at the first track point
+    route = json.loads(route_json) if route_json else []
+    if len(route) >= 2:
+        rimg = Image.new("L", (nxb, nyb), 0)
+        rd2 = ImageDraw.Draw(rimg)
+        rpts = [ll_px(lo, la) for lo, la in route]
+        rw = max(2, int(round(float(route_w) / P)))      # ribbon width in mm on the board
+        rd2.line(rpts, fill=1, width=rw, joint="curve")
+        rmask = np.array(rimg) > 0
+        if rmask.any():
+            V, F = _mesh(rmask, Zt + 1.0, Zt - EMBED, BH, P)
+            objects.append(("route", ROUTE_COLORS.get(route_kind, ROUTE_COLORS["bike"]), V, F))
+        simg = Image.new("L", (nxb, nyb), 0)
+        sd = ImageDraw.Draw(simg)
+        sx, sy = rpts[0]
+        sr = 2.6 / P
+        sd.ellipse([sx - sr, sy - sr, sx + sr, sy + sr], fill=1)
+        smask = np.array(simg) > 0
+        if smask.any():
+            V, F = _mesh(smask, Zt + 1.4, Zt - EMBED, BH, P)
+            objects.append(("start", (245, 245, 245), V, F))
 
     # hole outlines (corridor boundary, kept on rough) + raised hole numbers
-    holes = json.loads(holes_json) if holes_json else []
+    holes = json.loads(holes_json) if (holes_json and "marks" not in hide) else []
     if holes:
         corr = Image.new("L", (nxb, nyb), 0); cd = ImageDraw.Draw(corr)
         cw = max(1, int(round(60.0 * px_per_m)))            # ~60 m playing corridor

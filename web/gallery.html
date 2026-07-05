@@ -115,7 +115,7 @@
 <section class="featured"><div class="fwrap">
   <div class="tagline">
     <h1>Turn any place on Earth into a <em>3D-printed board</em>.</h1>
-    <p class="sub">Search a golf course, watch it become a full-color terrain model right in your browser, then download or order the print.</p>
+    <p class="sub">Search a golf course — or upload a GPX of your favorite ride — and watch it become a full-color terrain model right in your browser. Then download or order the print.</p>
   </div>
   <div class="hero">
     <div class="thumb" id="heroThumb"></div>
@@ -139,6 +139,9 @@
     <span style="flex:1"></span>
     <div class="chip on" data-type="" onclick="setType(this)">All</div>
     <div class="chip" data-type="golf" onclick="setType(this)">⛳ Golf</div>
+    <div class="chip" data-type="bike" onclick="setType(this)">🚴 Bike</div>
+    <div class="chip" data-type="moto" onclick="setType(this)">🏍 Moto</div>
+    <div class="chip" data-type="drive" onclick="setType(this)">🚗 Drive</div>
   </div>
   <div class="grid" id="grid">
     <div class="sk"><div class="a"></div><div class="b"></div></div>
@@ -160,7 +163,7 @@
 let VOTER=localStorage.getItem('voter'); if(!VOTER){VOTER=Math.random().toString(36).slice(2)+Date.now().toString(36);localStorage.setItem('voter',VOTER);}
 const VOTED=new Set(JSON.parse(localStorage.getItem('voted')||'[]'));
 let sort='trending', type='';
-const TYPE_BADGE={golf:'⛳ golf',cribbage:'cribbage',town:'🗺 town',skyline:'🏙 skyline'};
+const TYPE_BADGE={golf:'⛳ golf',bike:'🚴 bike',moto:'🏍 moto',drive:'🚗 drive',cribbage:'cribbage',town:'🗺 town',skyline:'🏙 skyline'};
 const esc=s=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const api=async p=>{const r=await fetch(p);if(!r.ok)throw new Error(p+' '+r.status);return r.json();};
 // place strings from Nominatim are long — keep the readable head

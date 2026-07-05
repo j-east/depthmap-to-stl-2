@@ -9,7 +9,7 @@ async function init(){
   FONT = new Uint8Array(await (await fetch('font.ttf')).arrayBuffer());
   postMessage({type:'ready'});
 }
-const ready = init();
+const ready = init().catch(e=>{ postMessage({type:'error',msg:'engine failed to load: '+e.message}); throw e; });
 
 // ---- NOAA NCEI topobathy DEM (float TIFF, CORS-open): land + real ocean depth ----
 async function fetchDEM(w,s,e,n){
@@ -93,7 +93,10 @@ onmessage = async (ev)=>{
     const [w,s,e,n]=m.bbox;
     postMessage({type:'progress',msg:'fetching terrain + OSM…'});
     const [dem,ff]=await Promise.all([fetchDEM(w,s,e,n), fetchFeatures(w,s,e,n)]);
-    const holes=m.holes||ff.holes;   // m.holes = user-edited labels (moved/deleted) from the edit step
+    const route=m.route||[], kind=m.kind||'bike', hide=m.hide||[], routeW=+m.routeW||2.4;
+    hide.forEach(k=>{ delete ff.feats[k]; });        // excluded features never reach the mesher
+    // m.holes = user-edited labels from the edit step; ride boards never get golf numbers
+    const holes=route.length ? (m.holes||[]) : (m.holes||ff.holes);
     const counts=Object.fromEntries(Object.entries(ff.feats).map(([k,v])=>[k,v.length]));
     postMessage({type:'progress',msg:`DEM ${dem.W}x${dem.H}, ${holes.length} holes, ${JSON.stringify(counts)} (${((Date.now()-t0)/1000).toFixed(1)}s)`});
     const t1=Date.now();
@@ -101,14 +104,17 @@ onmessage = async (ev)=>{
     pyodide.globals.set('feats_json',JSON.stringify(ff.feats));
     pyodide.globals.set('holes_json',JSON.stringify(holes));
     pyodide.globals.set('font_bytes',FONT);
-    const res=pyodide.runPython(`golf_board(dem_bytes,0,0,[${w},${s},${e},${n}],feats_json,${m.exag},8.0,holes_json,font_bytes)`);
+    pyodide.globals.set('route_json',JSON.stringify(route));
+    pyodide.globals.set('hide_json',JSON.stringify(hide));
+    const call=p=>`golf_board(dem_bytes,0,0,[${w},${s},${e},${n}],feats_json,${m.exag},8.0,holes_json,font_bytes,${p},route_json,'${kind}',hide_json,${routeW})`;
+    const res=pyodide.runPython(call('None'));
     const out=res.toJs(); res.destroy();
     const objects=out.get('objects').map(o=>({
       name:o.get('name'), color:o.get('color'), ntri:o.get('ntri'),
       verts:o.get('verts').buffer, tris:o.get('tris').buffer}));
     const tmf=out.get('tmf').buffer;
     // coarse preview mesh for the gallery (small, instant to view) — reuses fetched data
-    const pres=pyodide.runPython(`golf_board(dem_bytes,0,0,[${w},${s},${e},${n}],feats_json,${m.exag},8.0,holes_json,font_bytes,0.5)`);
+    const pres=pyodide.runPython(call('0.5'));
     const pout=pres.toJs(); pres.destroy();
     const preview=packMesh(pout.get('objects'));
     const transfer=objects.flatMap(o=>[o.verts,o.tris]); transfer.push(tmf, preview);

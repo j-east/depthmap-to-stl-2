@@ -25,21 +25,58 @@
   .tog .sw{width:36px;height:20px;border-radius:11px;background:#3a3a52;position:relative;transition:.16s;flex-shrink:0}
   .tog .sw:after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:.16s}
   .tog input:checked + .sw{background:#1f7a3a} .tog input:checked + .sw:after{left:18px}
+  .modes{display:flex;gap:6px;margin:12px 0 2px}
+  .mode{flex:1;text-align:center;padding:8px 4px;background:#1a1f2b;border:1px solid #2a3142;border-radius:8px;cursor:pointer;color:#9a9ab0;font-size:13px;user-select:none;transition:all .13s}
+  .mode:hover{color:#dde} .mode.on{background:#22304a;border-color:#2563eb;color:#fff}
+  .kinds{display:flex;gap:6px;margin-top:2px}
+  .kind{flex:1;text-align:center;padding:7px 2px;background:#1a1f2b;border:1px solid #2a3142;border-radius:8px;cursor:pointer;color:#9a9ab0;font-size:12.5px;user-select:none;transition:all .13s}
+  .kind:hover{color:#dde} .kind.on{background:#3a2a1c;border-color:#f0762e;color:#ffd9bd}
+  .feat{display:flex;align-items:center;gap:7px;font-size:12.5px;color:#9a9ab0;margin:5px 0;cursor:pointer;user-select:none}
+  .feat input{width:auto;accent-color:#1f7a3a}
+  input[type=range]{accent-color:#2563eb;padding:0;background:none;border:0}
 </style></head><body>
 <div id="side">
   <h1 id="h1">⛳ Create a board</h1>
   <a href="/" style="font-size:12px">← gallery</a>
-  <label>search a golf course</label>
-  <input id="q" placeholder="e.g. Pebble Beach" onkeydown="if(event.key==='Enter')doSearch()">
-  <button onclick="doSearch()" style="margin-top:6px">Search</button>
-  <div id="results" style="margin-top:8px;max-height:200px;overflow:auto"></div>
-  <details style="margin-top:10px"><summary style="color:#9a9ab0;font-size:12px;cursor:pointer">advanced: bbox</summary>
-  <label>bbox W,S,E,N</label><input id="bb"><button onclick="enterEditFromBbox()" style="margin-top:6px">Edit this bbox</button></details>
+  <div class="modes">
+    <div class="mode on" id="mGolf" onclick="setMode('golf')">⛳ Golf course</div>
+    <div class="mode" id="mRide" onclick="setMode('ride')">🚵 Ride loop</div>
+  </div>
+  <div id="golfpanel">
+    <label>search a golf course</label>
+    <input id="q" placeholder="e.g. Pebble Beach" autocomplete="off" onkeydown="if(event.key==='Enter')doSearch()">
+    <button onclick="doSearch()" style="margin-top:6px">Search</button>
+    <div id="results" style="margin-top:8px;max-height:200px;overflow:auto"></div>
+    <details style="margin-top:10px"><summary style="color:#9a9ab0;font-size:12px;cursor:pointer">advanced: bbox</summary>
+    <label>bbox W,S,E,N</label><input id="bb"><button onclick="enterEditFromBbox()" style="margin-top:6px">Edit this bbox</button></details>
+  </div>
+  <div id="ridepanel" style="display:none">
+    <label>ride type</label>
+    <div class="kinds">
+      <div class="kind on" data-k="bike" onclick="setKind('bike')">🚴 Bike</div>
+      <div class="kind" data-k="moto" onclick="setKind('moto')">🏍 Moto</div>
+      <div class="kind" data-k="drive" onclick="setKind('drive')">🚗 Drive</div>
+    </div>
+    <label>plan a route — search a starting point</label>
+    <input id="wq" placeholder="e.g. Fairfax, CA" autocomplete="off" onkeydown="if(event.key==='Enter')wpSearch()">
+    <button onclick="wpSearch()" style="margin-top:6px">Search</button>
+    <div id="wres" style="margin-top:8px;max-height:170px;overflow:auto"></div>
+    <div id="drawtools" style="display:none;margin-top:8px">
+      <div style="display:flex;gap:6px"><button id="undoWp" style="flex:1;background:#2a3142">↩ Undo</button><button id="clearWp" style="flex:1;background:#2a3142">✕ Clear</button></div>
+      <button id="closeLoop" style="display:none;width:100%;margin-top:6px;background:#1f5a7a">⟲ Close the loop — route back to start</button>
+      <div class="tip" id="drawinfo" style="color:#9fd"></div>
+    </div>
+    <div class="tip" style="margin-top:10px;border-top:1px solid #2a3142;padding-top:10px;text-align:center;color:#5d6579">— or —</div>
+    <input type="file" id="gpx" accept=".gpx,application/gpx+xml" style="display:none">
+    <button onclick="document.getElementById('gpx').click()" style="width:100%">⬆ Upload GPX track</button>
+    <div class="tip">Export your favorite loop as <b>GPX</b> from Strava, Garmin, Komoot or RideWithGPS. Either way the route becomes a raised colored ribbon over the terrain, with a start marker.</div>
+    <div id="gpxinfo" class="tip" style="color:#9fd"></div>
+  </div>
 
   <div id="editpanel" style="display:none">
-    <label>vertical exaggeration</label><input id="ex" value="4.0">
     <button class="go" id="gen">✓ Generate board</button>
-    <div class="tip">Drag the <b>crop box</b> edges/corners to frame the board. Drag <b>hole numbers</b> to move them; click the ✕ to delete a stray one (e.g. a practice course).</div>
+    <div class="tip" id="tipGolf">Drag the <b>crop box</b> edges/corners to frame the board. Drag <b>hole numbers</b> to move them; click the ✕ to delete a stray one (e.g. a practice course).</div>
+    <div class="tip" id="tipRide" style="display:none"><b>Click the map</b> to drop waypoints — the route snaps to roads. <b>Drag the route</b> to reshape it (Google-Maps style), drag waypoints to move them, ✕ to remove. Scroll to zoom, drag outside the crop box to pan. Then frame with the <b>crop box</b>.</div>
   </div>
 
   <div id="donepanel" style="display:none">
@@ -47,11 +84,28 @@
     <div id="dl"><a id="dla" download="golf.3mf">⬇ download 3MF</a></div>
     <button class="go" id="pub" style="margin-top:10px;width:100%">↑ Publish to gallery</button>
   </div>
+  <div id="layerbox" style="display:none">
+    <label>features on the board</label>
+    <div id="featchecks"></div>
+    <div id="ribbonrow" style="display:none">
+      <label>route thickness: <span id="rwv">2.4</span> mm</label>
+      <input type="range" id="rw" min="1.2" max="5" step="0.2" value="2.4" style="width:100%">
+    </div>
+    <label>vertical exaggeration: <span id="exv">4.0</span>×</label>
+    <input type="range" id="ex" min="1" max="8" step="0.5" value="4" style="width:100%">
+    <div class="tip" id="bakehint" style="display:none;color:#ffb86b">live preview — hit ↻ Regenerate to bake into the print file</div>
+  </div>
   <label class="tog"><input type="checkbox" id="spin" onchange="controls.autoRotate=this.checked"><span class="sw"></span> auto-rotate</label>
   <div id="status"></div>
   <div id="log"></div>
 </div>
-<div id="view"><canvas id="plan"></canvas></div>
+<div id="view"><canvas id="plan"></canvas>
+  <div id="zoomctl" style="display:none;position:absolute;right:16px;top:16px;flex-direction:column;gap:6px;z-index:5">
+    <button onclick="zoomBy(1/1.5)" style="width:38px;height:38px;font-size:20px;background:#1c2230;border:1px solid #33415a">+</button>
+    <button onclick="zoomBy(1.5)" style="width:38px;height:38px;font-size:20px;background:#1c2230;border:1px solid #33415a">−</button>
+    <button onclick="fitView()" title="fit to route / crop" style="width:38px;height:38px;font-size:16px;background:#1c2230;border:1px solid #33415a">⌖</button>
+  </div>
+</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -61,18 +115,190 @@ const setStatus=(h,c)=>{const s=document.getElementById('status');s.innerHTML=h;
 const params=new URLSearchParams(location.search);
 let lastPlace=params.get('name')||'';
 
+// ---------- modes: golf course vs ride loop (bike / moto / drive) ----------
+const KEMOJI={golf:'⛳',bike:'🚴',moto:'🏍',drive:'🚗'};
+const KCOLOR={bike:'#f0762e',moto:'#de3e3e',drive:'#f5c442'};
+let MODE='golf', rideKind='bike', routePts=null;
+function setMode(m){
+  MODE=m;
+  document.getElementById('mGolf').classList.toggle('on',m==='golf');
+  document.getElementById('mRide').classList.toggle('on',m==='ride');
+  document.getElementById('golfpanel').style.display=m==='golf'?'block':'none';
+  document.getElementById('ridepanel').style.display=m==='ride'?'block':'none';
+  if(!editing) document.getElementById('h1').textContent=m==='ride'?KEMOJI[rideKind]+' Create a ride board':'⛳ Create a board';
+  syncLayerbox();
+}
+function setKind(k){
+  rideKind=k;
+  document.querySelectorAll('.kind').forEach(x=>x.classList.toggle('on',x.dataset.k===k));
+  const h=document.getElementById('h1'); h.textContent=KEMOJI[k]+' '+h.textContent.replace(/^\S+\s*/,'');
+  if(drawMode&&wayPts.length>=2) reroute();       // bike vs car changes the road graph
+  else drawPlan();
+}
+function parseGPX(text){
+  const doc=new DOMParser().parseFromString(text,'text/xml');
+  let el=[...doc.getElementsByTagName('trkpt')]; if(!el.length) el=[...doc.getElementsByTagName('rtept')];
+  return el.map(p=>[+p.getAttribute('lon'),+p.getAttribute('lat')]).filter(p=>isFinite(p[0])&&isFinite(p[1]));
+}
+function simplify(pts){          // Douglas-Peucker in metres (iterative), capped ~800 pts
+  if(pts.length<=800) return pts;
+  const clat=pts[0][1]*Math.PI/180, kx=111320*Math.cos(clat), ky=111320;
+  const P=pts.map(p=>[p[0]*kx,p[1]*ky]);
+  let tol=4, out;
+  do{
+    const keep=new Uint8Array(pts.length); keep[0]=keep[pts.length-1]=1;
+    const stack=[[0,pts.length-1]];
+    while(stack.length){
+      const [i,j]=stack.pop(); if(j<=i+1) continue;
+      const [ax,ay]=P[i],[bx,by]=P[j],dx=bx-ax,dy=by-ay,L2=dx*dx+dy*dy;
+      let mi=-1,md=0;
+      for(let k=i+1;k<j;k++){
+        const t=L2?Math.max(0,Math.min(1,((P[k][0]-ax)*dx+(P[k][1]-ay)*dy)/L2)):0;
+        const d=Math.hypot(P[k][0]-ax-t*dx,P[k][1]-ay-t*dy);
+        if(d>md){md=d;mi=k;}
+      }
+      if(md>tol){keep[mi]=1;stack.push([i,mi],[mi,j]);}
+    }
+    out=pts.filter((_,i)=>keep[i]); tol*=1.8;
+  }while(out.length>800);
+  return out;
+}
+function routeKm(pts){ const clat=pts[0][1]*Math.PI/180,kx=111320*Math.cos(clat); let d=0;
+  for(let i=1;i<pts.length;i++)d+=Math.hypot((pts[i][0]-pts[i-1][0])*kx,(pts[i][1]-pts[i-1][1])*111320); return d/1000; }
+// ---- draw-a-route: waypoints -> OSRM road routing (same servers osm.org uses) ----
+let wayPts=[], drawMode=false, lastLegs=[], cropTouched=false;
+const OSRM={bike:'https://routing.openstreetmap.de/routed-bike',
+            moto:'https://routing.openstreetmap.de/routed-car',
+            drive:'https://routing.openstreetmap.de/routed-car'};
+async function osrm(wps,kind){
+  const coords=wps.map(p=>p.lon.toFixed(6)+','+p.lat.toFixed(6)).join(';');
+  const q='?overview=full&geometries=geojson&steps=false';
+  for(const base of [OSRM[kind]||OSRM.drive,'https://router.project-osrm.org']){
+    try{ const j=await (await fetch(base+'/route/v1/driving/'+coords+q)).json();
+      if(j.code==='Ok'&&j.routes&&j.routes[0]) return j.routes[0]; }catch(e){}
+  }
+  throw new Error('routing service unavailable — try again');
+}
+function loopClosed(){ if(wayPts.length<2) return false;
+  const a=wayPts[0], b=wayPts[wayPts.length-1];
+  return Math.hypot((a.lon-b.lon)*mPerLon,(a.lat-b.lat)*mPerLat)<40; }   // ~40 m
+function closeTheLoop(){ if(wayPts.length<2||loopClosed()) return;
+  wayPts.push({lon:wayPts[0].lon,lat:wayPts[0].lat}); reroute(); }
+function updateDrawInfo(distM){
+  const el=document.getElementById('drawinfo');
+  document.getElementById('drawtools').style.display=wayPts.length?'block':'none';
+  const open=wayPts.length>=2&&!loopClosed();
+  document.getElementById('closeLoop').style.display=open?'block':'none';
+  const km=distM!=null?distM/1000:(routePts&&routePts.length>1?routeKm(routePts):null);
+  el.textContent=wayPts.length<2?wayPts.length+' waypoint — click the map to add more'
+    :'✓ '+wayPts.length+' waypoints'+(km!=null?' · '+km.toFixed(1)+' km':'')
+      +(open?' · click A to close the loop':'');
+}
+document.getElementById('closeLoop').onclick=closeTheLoop;
+async function reroute(){
+  if(wayPts.length<2){ routePts=null; lastLegs=[]; updateDrawInfo(); drawPlan(); return; }
+  setStatus('<span class="spin"></span>routing…','#9fd');
+  console.log('[tm] reroute', wayPts.length, 'waypoints, kind', rideKind);
+  try{
+    const rt=await osrm(wayPts,rideKind);
+    console.log('[tm] osrm ok:', Math.round(rt.distance)+'m,', rt.geometry.coordinates.length, 'pts,', rt.legs.length, 'legs');
+    routePts=simplify(rt.geometry.coordinates.map(c=>[c[0],c[1]]));
+    lastLegs=rt.legs.map(l=>l.distance);
+    if(!cropTouched){ const lons=routePts.map(p=>p[0]),lats=routePts.map(p=>p[1]);
+      cropLL=expand([Math.min(...lons),Math.min(...lats),Math.max(...lons),Math.max(...lats)],1.25); }
+    updateDrawInfo(rt.distance);
+    setStatus('drag the route to reshape · Generate when ready','#9a9ab0');
+  }catch(e){ setStatus('✕ '+e.message,'#ff8a8a'); }
+  drawPlan();
+}
+function addWaypoint(lon,lat,name){
+  wayPts.push({lon,lat}); drawMode=true;
+  if(name&&wayPts.length===1){ lastPlace=name; document.getElementById('h1').textContent=KEMOJI[rideKind]+' '+name.split(',')[0]; }
+  updateDrawInfo(); reroute();
+}
+async function wpSearch(){
+  const q=document.getElementById('wq').value.trim(); if(!q) return;
+  const rd=document.getElementById('wres'); rd.textContent='searching…';
+  try{ const arr=await nominatim(q); if(!arr.length){rd.textContent='no matches';return;} rd.innerHTML='';
+    arr.slice(0,8).forEach(x=>{ const el=document.createElement('div');
+      el.style.cssText='padding:7px 8px;margin:4px 0;background:#22222e;border:1px solid #33415a;border-radius:6px;cursor:pointer;font-size:13px';
+      el.innerHTML='<b>'+x.display_name.split(',')[0]+'</b><br><span style="color:#7a7a90;font-size:11px">'+x.display_name.split(',').slice(1,4).join(',')+'</span>';
+      el.onclick=()=>{ rd.innerHTML=''; document.getElementById('wq').value='';
+        const lon=+x.lon, lat=+x.lat;
+        if(!editing){ const dy=0.08, dx=dy/Math.cos(lat*Math.PI/180);   // ~18 km view — ride scale
+          cropTouched=false; enterEdit([lon-dx,lat-dy,lon+dx,lat+dy],true); }
+        addWaypoint(lon,lat,x.display_name); };
+      rd.appendChild(el); });
+  }catch(e){ rd.textContent='search failed: '+e.message; }
+}
+document.getElementById('undoWp').onclick=()=>{ wayPts.pop(); reroute(); };
+document.getElementById('clearWp').onclick=()=>{ wayPts=[]; routePts=null; lastLegs=[]; updateDrawInfo(); drawPlan(); };
+
+document.getElementById('gpx').onchange=async e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const raw=parseGPX(await f.text());
+  if(raw.length<2){ setStatus('no track points found in that GPX','#ff8a8a'); return; }
+  wayPts=[]; drawMode=false; updateDrawInfo();
+  routePts=simplify(raw);
+  lastPlace=f.name.replace(/\.gpx$/i,'').replace(/[_-]+/g,' ');
+  document.getElementById('h1').textContent=KEMOJI[rideKind]+' '+lastPlace;
+  document.getElementById('gpxinfo').textContent='✓ '+raw.length.toLocaleString()+' points · '+routeKm(routePts).toFixed(1)+' km';
+  const lons=routePts.map(p=>p[0]),lats=routePts.map(p=>p[1]);
+  enterEdit([Math.min(...lons),Math.min(...lats),Math.max(...lons),Math.max(...lats)],true);
+};
+
 // ---------- 3D view (result) ----------
-let renderer,scene,camera,controls,group,lastPreview=null;
+let renderer,scene,camera,controls,group,lastPreview=null,splitEdit=false;
+// live vertical exaggeration: GPU rescales terrain above the base plate (z>0 stretches
+// around uBase; the flat bottom stays put) — no remesh, instant. Regenerate bakes it.
+const EX_UNI={value:1}, BASE_UNI={value:8};
+function patchMat(m){ m.onBeforeCompile=s=>{ s.uniforms.uK=EX_UNI; s.uniforms.uBase=BASE_UNI;
+  s.vertexShader='uniform float uK;uniform float uBase;\n'+s.vertexShader.replace('#include <begin_vertex>',
+    '#include <begin_vertex>\nif(transformed.z>0.001){transformed.z=uBase+(transformed.z-uBase)*uK;}'); }; }
+let bakedExag=4;
+// feature groups: checkbox -> instant mesh visibility + excluded from the next generate
+const FEATGROUPS=[
+  {key:'turf',     label:'⛳ course turf',        objs:['fairway','tee','green','bunker'], golf:true},
+  {key:'marks',    label:'⛳ hole outlines + numbers', objs:['outline','numbers'], golf:true},
+  {key:'road',     label:'🛣 roads',              objs:['road']},
+  {key:'cartpath', label:'🥾 trails & paths',     objs:['cartpath']},
+  {key:'rail',     label:'🚂 railways',           objs:['rail']},
+  {key:'water',    label:'💧 water',              objs:['water']},
+];
+const featOn={}; FEATGROUPS.forEach(g=>featOn[g.key]=true);
+function hideList(){ return FEATGROUPS.filter(g=>!featOn[g.key])
+  .flatMap(g=>g.key==='marks'?['marks']:g.objs); }
+function applyVisibility(){ if(!group)return;
+  const off=new Set(FEATGROUPS.filter(g=>!featOn[g.key]).flatMap(g=>g.objs));
+  group.children.forEach(m=>{ if(m.name) m.visible=!off.has(m.name); }); }
+function markDirty(){ if(group) document.getElementById('bakehint').style.display='block'; }
+function buildFeatChecks(){
+  const box=document.getElementById('featchecks'); box.innerHTML='';
+  FEATGROUPS.forEach(g=>{
+    const l=document.createElement('label'); l.className='feat'; if(g.golf) l.dataset.golf='1';
+    const c=document.createElement('input'); c.type='checkbox'; c.checked=featOn[g.key];
+    c.onchange=()=>{ featOn[g.key]=c.checked; applyVisibility(); markDirty(); };
+    l.appendChild(c); l.appendChild(document.createTextNode(' '+g.label)); box.appendChild(l);
+  });
+}
+function syncLayerbox(){       // golf-only rows and the ribbon slider follow the mode
+  document.querySelectorAll('#featchecks .feat').forEach(l=>{ l.style.display=(l.dataset.golf&&MODE==='ride')?'none':'flex'; });
+  document.getElementById('ribbonrow').style.display=MODE==='ride'?'block':'none';
+}
+function resize3D(frac){ const el=document.getElementById('view');
+  const w=Math.max(1,Math.floor(el.clientWidth*frac));
+  renderer.setSize(w,el.clientHeight,false);           // buffer only — CSS % widths stay
+  camera.aspect=w/el.clientHeight; camera.updateProjectionMatrix(); }
 function initView(){
   const el=document.getElementById('view');
   renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});
   renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2)); renderer.setSize(el.clientWidth,el.clientHeight);
-  renderer.domElement.style.cssText='position:absolute;inset:0'; el.appendChild(renderer.domElement);
+  renderer.domElement.style.cssText='position:absolute;top:0;right:0;width:100%;height:100%'; el.appendChild(renderer.domElement);
   scene=new THREE.Scene(); scene.background=new THREE.Color(0x11151a);
   camera=new THREE.PerspectiveCamera(45,el.clientWidth/el.clientHeight,0.1,5000); camera.up.set(0,0,1); camera.position.set(142,-270,210);
   controls=new THREE.OrbitControls(camera,renderer.domElement); controls.enableDamping=true; controls.dampingFactor=0.08; controls.autoRotateSpeed=1.2;
   scene.add(new THREE.HemisphereLight(0xffffff,0x223,0.75)); const d=new THREE.DirectionalLight(0xffffff,0.75); d.position.set(-1,-1,2); scene.add(d);
-  addEventListener('resize',()=>{const e=document.getElementById('view');renderer.setSize(e.clientWidth,e.clientHeight);camera.aspect=e.clientWidth/e.clientHeight;camera.updateProjectionMatrix();fitPlan();drawPlan();});
+  addEventListener('resize',()=>{resize3D(splitEdit?0.5:1);fitPlan();drawPlan();});
   (function loop(){requestAnimationFrame(loop);if(controls)controls.update();renderer.render(scene,camera);})();
 }
 function showObjects(objs){
@@ -80,9 +306,11 @@ function showObjects(objs){
   objs.forEach(o=>{const geo=new THREE.BufferGeometry();
     geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(o.verts),3));
     geo.setIndex(new THREE.BufferAttribute(new Uint32Array(o.tris),1)); geo.computeVertexNormals();
-    g.add(new THREE.Mesh(geo,new THREE.MeshStandardMaterial({color:new THREE.Color(o.color),roughness:0.92,side:THREE.DoubleSide})));});
+    const mat=new THREE.MeshStandardMaterial({color:new THREE.Color(o.color),roughness:0.92,side:THREE.DoubleSide});
+    patchMat(mat); const mesh=new THREE.Mesh(geo,mat); mesh.name=o.name||''; g.add(mesh);});
   const box=new THREE.Box3().setFromObject(g),c=box.getCenter(new THREE.Vector3()); g.position.set(-c.x,-c.y,-c.z);
   const old=group; group=g; scene.add(g); if(old){scene.remove(old);old.traverse(o=>{if(o.geometry)o.geometry.dispose();});}
+  applyVisibility();
 }
 
 // ---------- course search (Nominatim) ----------
@@ -115,37 +343,112 @@ const plan=document.getElementById('plan'); const px=plan.getContext('2d');
 let editing=false, VP=null, cropLL=null, feats={}, labels=[], scaleM=1, offX=0, offY=0, mPerLon=1, mPerLat=111320;
 let drag=null;   // {kind:'crop-<handle>'|'label', idx}
 function expand(bb,f){ const cx=(bb[0]+bb[2])/2, cy=(bb[1]+bb[3])/2; return [cx+(bb[0]-cx)*f, cy+(bb[1]-cy)*f, cx+(bb[2]-cx)*f, cy+(bb[3]-cy)*f]; }
+// Web-Mercator plan projection (aligns with OSM raster tiles); scaleM = px per mercator metre
+const RM=6378137, D2R=Math.PI/180;
+const mercX=lon=>RM*lon*D2R, mercY=lat=>RM*Math.log(Math.tan(Math.PI/4+lat*D2R/2));
+const invX=x=>x/RM/D2R, invY=y=>(2*Math.atan(Math.exp(y/RM))-Math.PI/2)/D2R;
 function fitPlan(){ if(!VP)return; plan.width=plan.clientWidth; plan.height=plan.clientHeight;
-  const clat=(VP[1]+VP[3])/2; mPerLon=111320*Math.cos(clat*Math.PI/180); mPerLat=111320;
-  const Wm=(VP[2]-VP[0])*mPerLon, Hm=(VP[3]-VP[1])*mPerLat;
-  scaleM=Math.min(plan.width/Wm, plan.height/Hm)*0.92; offX=(plan.width-Wm*scaleM)/2; offY=(plan.height-Hm*scaleM)/2; }
-function ll2px(lon,lat){ return [offX+(lon-VP[0])*mPerLon*scaleM, offY+(VP[3]-lat)*mPerLat*scaleM]; }
-function px2ll(x,y){ return [VP[0]+(x-offX)/scaleM/mPerLon, VP[3]-(y-offY)/scaleM/mPerLat]; }
+  const clat=(VP[1]+VP[3])/2; mPerLon=111320*Math.cos(clat*D2R); mPerLat=111320;
+  const W=mercX(VP[2])-mercX(VP[0]), H=mercY(VP[3])-mercY(VP[1]);
+  scaleM=Math.min(plan.width/W, plan.height/H)*0.94; offX=(plan.width-W*scaleM)/2; offY=(plan.height-H*scaleM)/2; }
+function ll2px(lon,lat){ return [offX+(mercX(lon)-mercX(VP[0]))*scaleM, offY+(mercY(VP[3])-mercY(lat))*scaleM]; }
+function px2ll(x,y){ return [invX(mercX(VP[0])+(x-offX)/scaleM), invY(mercY(VP[3])-(y-offY)/scaleM)]; }
+// OSM tile basemap: coastlines, ocean, parks, names — the real map under our overlays
+const tileCache={}; let tileRedraw=null;
+function drawTiles(){
+  const z=Math.max(3,Math.min(19,Math.round(Math.log2(scaleM*2*Math.PI*RM/256))));
+  const n=1<<z;
+  const nw=px2ll(0,0), se=px2ll(plan.width,plan.height);
+  const tx=lon=>(lon+180)/360*n, ty=lat=>(1-Math.log(Math.tan(lat*D2R)+1/Math.cos(lat*D2R))/Math.PI)/2*n;
+  const x0=Math.floor(tx(nw[0])), x1=Math.floor(tx(se[0]));
+  const y0=Math.max(0,Math.floor(ty(nw[1]))), y1=Math.min(n-1,Math.floor(ty(se[1])));
+  for(let x=x0;x<=x1;x++) for(let y=y0;y<=y1;y++){
+    const key=z+'/'+(((x%n)+n)%n)+'/'+y;
+    let img=tileCache[key];
+    if(!img){ img=new Image(); img.crossOrigin='anonymous'; tileCache[key]=img;
+      img.onload=()=>{ clearTimeout(tileRedraw); tileRedraw=setTimeout(drawPlan,60); };
+      img.src='https://tile.openstreetmap.org/'+key+'.png'; }
+    if(img.complete&&img.naturalWidth){
+      const lonW=x/n*360-180, lonE=(x+1)/n*360-180;
+      const latN=(2*Math.atan(Math.exp(Math.PI*(1-2*y/n)))-Math.PI/2)/D2R;
+      const latS=(2*Math.atan(Math.exp(Math.PI*(1-2*(y+1)/n)))-Math.PI/2)/D2R;
+      const a=ll2px(lonW,latN), b=ll2px(lonE,latS);
+      px.drawImage(img,a[0],a[1],b[0]-a[0]+0.5,b[1]-a[1]+0.5);
+    }
+  }
+}
 const COLORS={fairway:'#96c868',tee:'#76b078',green:'#c6e280',bunker:'#eedeaa',water:'#3a7cbe',road:'#606068',cartpath:'#d4c8b4',rail:'#46464e'};
 function midLL(pts){ // arc-length midpoint in lon/lat
   if(pts.length<2)return pts[0]; let seg=[],tot=0;
   for(let i=0;i<pts.length-1;i++){const d=Math.hypot((pts[i+1][0]-pts[i][0])*mPerLon,(pts[i+1][1]-pts[i][1])*mPerLat);seg.push(d);tot+=d;}
   let half=tot/2,acc=0; for(let i=0;i<seg.length;i++){if(acc+seg[i]>=half){const f=seg[i]?(half-acc)/seg[i]:0;return [pts[i][0]+f*(pts[i+1][0]-pts[i][0]),pts[i][1]+f*(pts[i+1][1]-pts[i][1])];}acc+=seg[i];} return pts[pts.length-1];
 }
-function enterEdit(guess){
-  VP=expand(guess,1.7); cropLL=expand(guess,1.5);   // default crop = 1.5x the guess; view a bit wider
+function enterEdit(guess,isRide,exact){
+  // golf: crop = 1.5x the course guess; ride: modest padding around the track bbox;
+  // exact: guess IS the crop (remixing a saved design — don't re-expand it)
+  if(exact){ VP=expand(guess,1.3); cropLL=guess.slice(); }
+  else{ VP=expand(guess,isRide?1.5:1.7); cropLL=expand(guess,isRide?1.25:1.5); }
   editing=true; document.getElementById('editpanel').style.display='block'; document.getElementById('donepanel').style.display='none';
-  document.getElementById('plan').style.display='block'; if(renderer) renderer.domElement.style.display='none';
-  setStatus('<span class="spin"></span>loading course map…','#9fd'); feats={}; labels=[];
-  workerReady ? worker.postMessage({type:'features',bbox:VP}) : (pendingFeatures=VP);
+  document.getElementById('layerbox').style.display='block'; syncLayerbox();
+  document.getElementById('tipGolf').style.display=MODE==='ride'?'none':'block';
+  document.getElementById('tipRide').style.display=MODE==='ride'?'block':'none';
+  document.getElementById('plan').style.display='block'; document.getElementById('zoomctl').style.display='flex';
+  splitEdit=false; plan.style.width='100%'; plan.style.borderRight='none';
+  document.getElementById('zoomctl').style.right='16px';
+  if(renderer){ renderer.domElement.style.display='none'; renderer.domElement.style.width='100%'; resize3D(1); }
+  feats={}; labels=[];
+  console.log('[tm] enterEdit', {VP,cropLL,isRide:!!isRide,workerReady});
+  if(MODE==='ride'){   // tiles are the basemap; no Overpass needed for display
+    fitPlan(); drawPlan();
+    setStatus(routePts?'adjust, then Generate':'click the map to drop waypoints','#9a9ab0');
+  }else{
+    setStatus('<span class="spin"></span>loading course map…','#9fd');
+    workerReady ? worker.postMessage({type:'features',bbox:VP}) : (pendingFeatures=VP);
+  }
 }
 function onFeatures(m){
-  feats=m.feats||{}; labels=(m.holes||[]).filter(h=>h.num).map(h=>{const ll=midLL(h.pts);return {num:h.num,pts:h.pts,lon:ll[0],lat:ll[1],del:false};});
-  setStatus(labels.length+' holes · drag to adjust, then Generate','#9a9ab0'); fitPlan(); drawPlan();
+  feats=m.feats||{}; if(m.bbox) featBB=m.bbox;
+  // only build hole labels on first load — refetches (pan/zoom) must not clobber user edits
+  if(MODE!=='ride'&&!labels.length)
+    labels=(m.holes||[]).filter(h=>h.num).map(h=>{const ll=midLL(h.pts);return {num:h.num,pts:h.pts,lon:ll[0],lat:ll[1],del:false};});
+  setStatus(MODE==='ride'?(drawMode||routePts?'adjust, then Generate':'click the map to drop waypoints'):labels.length+' holes · drag to adjust, then Generate','#9a9ab0');
+  fitPlan(); drawPlan();
 }
 function drawPolys(list,fill){ if(!list)return; px.fillStyle=fill; list.forEach(w=>{ if(w.length<3)return; px.beginPath(); w.forEach((p,i)=>{const q=ll2px(p[0],p[1]); i?px.lineTo(q[0],q[1]):px.moveTo(q[0],q[1]);}); px.closePath(); px.fill(); }); }
 function drawLines(list,stroke,wd){ if(!list)return; px.strokeStyle=stroke; px.lineWidth=wd; list.forEach(w=>{ px.beginPath(); w.forEach((p,i)=>{const q=ll2px(p[0],p[1]); i?px.lineTo(q[0],q[1]):px.moveTo(q[0],q[1]);}); px.stroke(); }); }
 function drawPlan(){
   if(!editing||!VP)return; px.clearRect(0,0,plan.width,plan.height);
-  px.fillStyle='#1a2a22'; px.fillRect(0,0,plan.width,plan.height);
-  drawPolys(feats.water,'#2b5c86'); drawPolys(feats.fairway,COLORS.fairway); drawPolys(feats.tee,COLORS.tee);
-  drawPolys(feats.bunker,COLORS.bunker); drawPolys(feats.green,COLORS.green);
-  drawLines(feats.road,COLORS.road,3); drawLines(feats.rail,COLORS.rail,2); drawLines(feats.cartpath,COLORS.cartpath,2);
+  px.fillStyle='#0f1319'; px.fillRect(0,0,plan.width,plan.height);
+  drawTiles();
+  if(MODE!=='ride'){        // golf: preview the layers that will actually print, over the basemap
+    drawPolys(feats.water,'#2b5c86'); drawPolys(feats.fairway,COLORS.fairway); drawPolys(feats.tee,COLORS.tee);
+    drawPolys(feats.bunker,COLORS.bunker); drawPolys(feats.green,COLORS.green);
+    drawLines(feats.road,COLORS.road,3); drawLines(feats.rail,COLORS.rail,2); drawLines(feats.cartpath,COLORS.cartpath,2);
+  }
+  // ride route overlay
+  if(MODE==='ride'&&routePts&&routePts.length>1){
+    px.strokeStyle=KCOLOR[rideKind]||'#f0762e'; px.lineWidth=4; px.lineJoin='round'; px.lineCap='round';
+    px.beginPath(); routePts.forEach((p,i)=>{const q=ll2px(p[0],p[1]); i?px.lineTo(q[0],q[1]):px.moveTo(q[0],q[1]);}); px.stroke();
+    const s=ll2px(routePts[0][0],routePts[0][1]);
+    px.fillStyle='#fff'; px.beginPath(); px.arc(s[0],s[1],6,0,7); px.fill();
+    px.fillStyle=KCOLOR[rideKind]; px.beginPath(); px.arc(s[0],s[1],3,0,7); px.fill();
+  }
+  // draw-mode: elastic ghost while dragging the route, then lettered waypoints
+  if(MODE==='ride'&&drawMode){
+    if(drag&&drag.kind==='route'&&wayPts[drag.leg]&&wayPts[drag.leg+1]){
+      const a=ll2px(wayPts[drag.leg].lon,wayPts[drag.leg].lat), b=ll2px(wayPts[drag.leg+1].lon,wayPts[drag.leg+1].lat);
+      px.setLineDash([6,6]); px.strokeStyle='#fff'; px.lineWidth=2;
+      px.beginPath(); px.moveTo(a[0],a[1]); px.lineTo(drag.gx,drag.gy); px.lineTo(b[0],b[1]); px.stroke(); px.setLineDash([]);
+      px.fillStyle='#fff'; px.beginPath(); px.arc(drag.gx,drag.gy,5,0,7); px.fill();
+    }
+    px.font='bold 11px sans-serif'; px.textAlign='center'; px.textBaseline='middle';
+    wayPts.forEach((p,i)=>{ const q=ll2px(p.lon,p.lat);
+      px.fillStyle=i===0?'#1f7a3a':'#26507e'; px.beginPath(); px.arc(q[0],q[1],10,0,7); px.fill();
+      px.strokeStyle='#fff'; px.lineWidth=2; px.stroke();
+      px.fillStyle='#fff'; px.fillText(String.fromCharCode(65+(i%26)),q[0],q[1]);
+      px.fillStyle='#e0444a'; px.beginPath(); px.arc(q[0]+10,q[1]-10,6,0,7); px.fill();
+      px.fillStyle='#fff'; px.font='bold 10px sans-serif'; px.fillText('✕',q[0]+10,q[1]-10); px.font='bold 11px sans-serif'; });
+  }
   // crop box: dim outside
   const a=ll2px(cropLL[0],cropLL[3]), b=ll2px(cropLL[2],cropLL[1]); const x0=a[0],y0=a[1],x1=b[0],y1=b[1];
   px.fillStyle='rgba(8,10,14,0.55)'; px.fillRect(0,0,plan.width,y0); px.fillRect(0,y1,plan.width,plan.height-y1); px.fillRect(0,y0,x0,y1-y0); px.fillRect(x1,y0,plan.width-x1,y1-y0);
@@ -157,71 +460,205 @@ function drawPlan(){
     px.fillStyle='rgba(255,255,255,0.92)'; px.beginPath(); px.arc(q[0],q[1],11,0,7); px.fill();
     px.fillStyle='#11151a'; px.fillText(L.num,q[0],q[1]);
     px.fillStyle='#e0444a'; px.beginPath(); px.arc(q[0]+11,q[1]-11,6,0,7); px.fill(); px.fillStyle='#fff'; px.font='bold 10px sans-serif'; px.fillText('✕',q[0]+11,q[1]-11); px.font='bold 13px sans-serif'; });
+  px.font='10px sans-serif'; px.textAlign='right'; px.textBaseline='bottom';
+  px.fillStyle='rgba(0,0,0,0.6)'; px.fillText('© OpenStreetMap',plan.width-7,plan.height-6);
+  px.fillStyle='rgba(255,255,255,0.9)'; px.fillText('© OpenStreetMap',plan.width-8,plan.height-7);
 }
 function cropHandleAt(x,y){ const a=ll2px(cropLL[0],cropLL[3]),b=ll2px(cropLL[2],cropLL[1]); const x0=a[0],y0=a[1],x1=b[0],y1=b[1];
   const H={'nw':[x0,y0],'ne':[x1,y0],'sw':[x0,y1],'se':[x1,y1],'n':[(x0+x1)/2,y0],'s':[(x0+x1)/2,y1],'w':[x0,(y0+y1)/2],'e':[x1,(y0+y1)/2]};
   for(const k in H){ if(Math.abs(x-H[k][0])<8&&Math.abs(y-H[k][1])<8) return k; }
   if(x>x0&&x<x1&&y>y0&&y<y1) return 'move'; return null;
 }
+function distSeg(x,y,a,b){ const dx=b[0]-a[0],dy=b[1]-a[1],L2=dx*dx+dy*dy;
+  const t=L2?Math.max(0,Math.min(1,((x-a[0])*dx+(y-a[1])*dy)/L2)):0;
+  return {d:Math.hypot(x-a[0]-t*dx,y-a[1]-t*dy),t}; }
+function routeHit(x,y){                    // grab point on the route -> which waypoint leg
+  if(!routePts||routePts.length<2||wayPts.length<2) return null;
+  const P=routePts.map(p=>ll2px(p[0],p[1]));
+  let best=null, acc=0;
+  for(let i=0;i<P.length-1;i++){
+    const segM=Math.hypot((routePts[i+1][0]-routePts[i][0])*mPerLon,(routePts[i+1][1]-routePts[i][1])*mPerLat);
+    const h=distSeg(x,y,P[i],P[i+1]);
+    if(h.d<9&&(!best||h.d<best.d)) best={d:h.d,arc:acc+segM*h.t};
+    acc+=segM;
+  }
+  if(!best) return null;
+  let leg=0,c=0;
+  for(let i=0;i<lastLegs.length;i++){ c+=lastLegs[i]; leg=i; if(best.arc<=c) break; }
+  return {leg};
+}
 plan.addEventListener('pointerdown',e=>{ const r=plan.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
   for(let i=0;i<labels.length;i++){ if(labels[i].del)continue; const q=ll2px(labels[i].lon,labels[i].lat);
     if(Math.hypot(x-(q[0]+11),y-(q[1]-11))<8){ labels[i].del=true; drawPlan(); return; }       // ✕ delete
     if(Math.hypot(x-q[0],y-q[1])<12){ drag={kind:'label',idx:i}; return; } }
-  const h=cropHandleAt(x,y); if(h){ drag={kind:'crop',h,sx:x,sy:y,start:cropLL.slice()}; } });
+  if(MODE==='ride'&&drawMode){                               // waypoint ✕ / drag
+    for(let i=0;i<wayPts.length;i++){ const q=ll2px(wayPts[i].lon,wayPts[i].lat);
+      if(Math.hypot(x-(q[0]+10),y-(q[1]-10))<8){ wayPts.splice(i,1); reroute(); return; }
+      if(Math.hypot(x-q[0],y-q[1])<11){ drag={kind:'wp',idx:i,sx:x,sy:y,moved:false}; return; } } }
+  const h=cropHandleAt(x,y);
+  if(h&&h!=='move'){ cropTouched=true; drag={kind:'crop',h,sx:x,sy:y,start:cropLL.slice()}; return; }
+  if(MODE==='ride'&&drawMode){ const rh=routeHit(x,y);       // grab the route itself
+    if(rh){ drag={kind:'route',leg:rh.leg,gx:x,gy:y}; drawPlan(); return; } }
+  // click vs drag, resolved on move: inside crop -> move crop, outside -> pan the map
+  drag={kind:'tap',fallback:h==='move'?'crop':'pan',sx:x,sy:y,start:cropLL.slice(),vp0:VP.slice()};
+});
 plan.addEventListener('pointermove',e=>{ if(!drag)return; const r=plan.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
+  if(drag.kind==='tap'){
+    if(Math.hypot(x-drag.sx,y-drag.sy)<=5) return;
+    if(drag.fallback==='crop'){ cropTouched=true; drag={kind:'crop',h:'move',sx:drag.sx,sy:drag.sy,start:drag.start}; }
+    else drag={kind:'pan',sx:drag.sx,sy:drag.sy,vp0:drag.vp0};
+  }
+  if(drag.kind==='pan'){ const dx=(drag.sx-x)/scaleM, dy=(y-drag.sy)/scaleM;
+    VP=[invX(mercX(drag.vp0[0])+dx), invY(mercY(drag.vp0[1])+dy), invX(mercX(drag.vp0[2])+dx), invY(mercY(drag.vp0[3])+dy)];
+    drawPlan(); return; }
+  if(drag.kind==='wp'){ if(!drag.moved&&Math.hypot(x-drag.sx,y-drag.sy)<=4) return;
+    drag.moved=true; const ll=px2ll(x,y); wayPts[drag.idx].lon=ll[0]; wayPts[drag.idx].lat=ll[1]; drawPlan(); return; }
+  if(drag.kind==='route'){ drag.gx=x; drag.gy=y; drawPlan(); return; }
   if(drag.kind==='label'){ const ll=px2ll(x,y); labels[drag.idx].lon=ll[0]; labels[drag.idx].lat=ll[1]; drawPlan(); return; }
   const ll=px2ll(x,y), c=cropLL; const h=drag.h;
   if(h==='move'){ const s=drag.start, d0=px2ll(drag.sx,drag.sy); const dlon=ll[0]-d0[0],dlat=ll[1]-d0[1]; cropLL=[s[0]+dlon,s[1]+dlat,s[2]+dlon,s[3]+dlat]; }
   else { if(h.includes('w'))c[0]=Math.min(ll[0],c[2]-0.0005); if(h.includes('e'))c[2]=Math.max(ll[0],c[0]+0.0005);
          if(h.includes('n'))c[3]=Math.max(ll[1],c[1]+0.0005); if(h.includes('s'))c[1]=Math.min(ll[1],c[3]-0.0005); }
   drawPlan(); });
-addEventListener('pointerup',()=>{drag=null;});
+addEventListener('pointerup',()=>{ const d=drag; drag=null; if(!d) return;
+  if(d.kind==='tap'&&editing&&MODE==='ride'&&drawMode){ const ll=px2ll(d.sx,d.sy); addWaypoint(ll[0],ll[1]); return; }
+  if(d.kind==='wp'){
+    if(d.moved) reroute();                                        // dragged: recompute
+    else if(d.idx===0&&wayPts.length>=2&&!loopClosed()) closeTheLoop();  // clicked A: ride home
+  }
+  else if(d.kind==='route'){ const ll=px2ll(d.gx,d.gy); wayPts.splice(d.leg+1,0,{lon:ll[0],lat:ll[1]}); reroute(); }
+  else if(d.kind==='pan') scheduleRefetch();
+  else drawPlan();
+});
+function zoomBy(f){ if(!VP)return; const cx=(VP[0]+VP[2])/2, cy=(VP[1]+VP[3])/2;
+  VP=[cx+(VP[0]-cx)*f, cy+(VP[1]-cy)*f, cx+(VP[2]-cx)*f, cy+(VP[3]-cy)*f];
+  fitPlan(); drawPlan(); scheduleRefetch(); }
+function fitView(){ if(!VP)return;
+  let bb=cropLL;
+  if(routePts&&routePts.length>1){ const lons=routePts.map(p=>p[0]),lats=routePts.map(p=>p[1]);
+    bb=[Math.min(...lons),Math.min(...lats),Math.max(...lons),Math.max(...lats)]; }
+  VP=expand(bb,1.35); fitPlan(); drawPlan(); scheduleRefetch(); }
+plan.addEventListener('wheel',e=>{ if(!editing)return; e.preventDefault();
+  const r=plan.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top, ll=px2ll(x,y);
+  const f=e.deltaY>0?1.18:1/1.18, ax=mercX(ll[0]), ay=mercY(ll[1]);
+  VP=[invX(ax+(mercX(VP[0])-ax)*f), invY(ay+(mercY(VP[1])-ay)*f), invX(ax+(mercX(VP[2])-ax)*f), invY(ay+(mercY(VP[3])-ay)*f)];
+  fitPlan(); drawPlan(); scheduleRefetch();
+},{passive:false});
+// refetch OSM context when the viewport leaves the area we've fetched (debounced)
+let featBB=null, refetchT=null;
+function scheduleRefetch(){ clearTimeout(refetchT); refetchT=setTimeout(()=>{
+  if(!editing||!VP||MODE==='ride') return;      // ride uses tiles only
+  if(featBB&&VP[0]>=featBB[0]&&VP[1]>=featBB[1]&&VP[2]<=featBB[2]&&VP[3]<=featBB[3]) return;
+  featBB=expand(VP,1.3); worker.postMessage({type:'features',bbox:featBB});
+},700); }
 
 // ---------- build (worker) ----------
 let workerReady=false,tStart=0,pendingFeatures=null;
 const worker=new Worker('worker.js');
-worker.onmessage=(ev)=>{ const m=ev.data;
+worker.onerror=e=>{ console.error('[tm] worker crashed:',e.message,e.filename,e.lineno); setStatus('✕ engine error: '+e.message,'#ff8a8a'); };
+worker.onmessage=(ev)=>{ const m=ev.data; console.log('[tm] worker →',m.type,m.msg||'');
   if(m.type==='ready'){ workerReady=true; if(pendingFeatures){worker.postMessage({type:'features',bbox:pendingFeatures});pendingFeatures=null;} afterReady(); }
   else if(m.type==='features'){ onFeatures(m); }
   else if(m.type==='progress'){ setStatus('<span class="spin"></span>'+m.msg,'#9fd'); log(m.msg); }
   else if(m.type==='error'){ setStatus('✕ '+m.msg,'#ff8a8a'); document.getElementById('gen').disabled=false; }
   else if(m.type==='done'){
     showObjects(m.objects); lastPreview=m.preview||null; editing=false;
-    document.getElementById('plan').style.display='none'; renderer.domElement.style.display='block';
+    document.getElementById('plan').style.display='none'; document.getElementById('zoomctl').style.display='none';
+    splitEdit=false; plan.style.width='100%'; plan.style.borderRight='none';
+    document.getElementById('zoomctl').style.right='16px';
+    renderer.domElement.style.display='block'; renderer.domElement.style.width='100%'; resize3D(1);
+    document.getElementById('gen').textContent='✓ Generate board';
+    EX_UNI.value=1; document.getElementById('bakehint').style.display='none';
     document.getElementById('editpanel').style.display='none'; document.getElementById('donepanel').style.display='block';
-    const blob=new Blob([m.tmf],{type:'model/3mf'}); document.getElementById('dla').href=URL.createObjectURL(blob); document.getElementById('dl').style.display='block';
+    const blob=new Blob([m.tmf],{type:'model/3mf'}); const dla=document.getElementById('dla');
+    dla.href=URL.createObjectURL(blob); dla.download=((lastPlace||'board').split(',')[0].trim().replace(/\s+/g,'_')||'board')+'.3mf';
+    document.getElementById('dl').style.display='block';
     let tri=0;m.objects.forEach(o=>tri+=o.ntri); setStatus('✓ done in '+((performance.now()-tStart)/1000).toFixed(1)+'s · '+tri.toLocaleString()+' tris','#7CFC9A');
     document.getElementById('gen').disabled=false;
   }};
 document.getElementById('gen').onclick=()=>{
-  if(!workerReady)return; const ex=parseFloat(document.getElementById('ex').value);
+  if(!workerReady)return;
+  if(MODE==='ride'&&(!routePts||routePts.length<2)){ setStatus('draw at least 2 waypoints or upload a GPX first','#ffb86b'); return; }
+  const ex=parseFloat(document.getElementById('ex').value);
   const holes=labels.filter(L=>!L.del).map(L=>({pts:L.pts,num:L.num,lx:L.lon,ly:L.lat}));
   document.getElementById('gen').disabled=true; setStatus('<span class="spin"></span>building…','#9fd'); tStart=performance.now();
-  worker.postMessage({type:'generate',bbox:cropLL,exag:ex,holes});
+  const msg={type:'generate',bbox:cropLL,exag:ex,holes,hide:hideList()};
+  if(MODE==='ride'&&routePts){ msg.route=routePts; msg.kind=rideKind; msg.holes=[]; msg.routeW=parseFloat(document.getElementById('rw').value); }
+  bakedExag=ex;
+  worker.postMessage(msg);
 };
-document.getElementById('edit').onclick=()=>{ editing=true; document.getElementById('plan').style.display='block'; renderer.domElement.style.display='none'; document.getElementById('donepanel').style.display='none'; document.getElementById('editpanel').style.display='block'; fitPlan(); drawPlan(); };
+document.getElementById('edit').onclick=()=>{ editing=true;
+  plan.style.display='block'; document.getElementById('zoomctl').style.display='flex';
+  if(group){                       // board exists: split screen — edit left, live render right
+    splitEdit=true; plan.style.width='50%'; plan.style.borderRight='1px solid #2a3142';
+    document.getElementById('zoomctl').style.right='calc(50% + 16px)';
+    renderer.domElement.style.display='block'; renderer.domElement.style.width='50%'; resize3D(0.5);
+    document.getElementById('gen').textContent='↻ Regenerate board';
+  } else renderer.domElement.style.display='none';
+  document.getElementById('donepanel').style.display='none'; document.getElementById('editpanel').style.display='block';
+  fitPlan(); drawPlan(); };
 
 // ---------- publish ----------
 async function publish(){
   if(!group){setStatus('generate first','#ffb86b');return;}
-  const name=prompt('Name this board:',(document.getElementById('h1').textContent||'').replace(/^⛳\s*/,'').trim()||'My board'); if(!name)return;
+  const name=prompt('Name this board:',(document.getElementById('h1').textContent||'').replace(/^\S+\s*/,'').trim()||'My board'); if(!name)return;
   const handle=prompt('Your name/handle (optional):','')||'';
   const tc=document.createElement('canvas'); tc.width=480;tc.height=360; tc.getContext('2d').drawImage(renderer.domElement,0,0,tc.width,tc.height);
   setStatus('<span class="spin"></span>publishing…','#9fd');
-  try{ const r=await (await fetch('/api/designs',{method:'POST',body:JSON.stringify({type:'golf',name,place:lastPlace,bbox:cropLL,params:{exag:parseFloat(document.getElementById('ex').value)},handle,thumb:tc.toDataURL('image/png')})})).json();
+  const kind=MODE==='ride'?rideKind:'golf';
+  const prms={exag:parseFloat(document.getElementById('ex').value)};
+  if(MODE==='ride'&&routePts){ prms.route=routePts; prms.kind=rideKind; prms.routeW=parseFloat(document.getElementById('rw').value); if(drawMode&&wayPts.length) prms.wpts=wayPts; }
+  const hid=hideList(); if(hid.length) prms.hide=hid;
+  try{ const r=await (await fetch('/api/designs',{method:'POST',body:JSON.stringify({type:kind,name,place:lastPlace,bbox:cropLL,params:prms,handle,thumb:tc.toDataURL('image/png')})})).json();
     if(r.id){ if(lastPreview) await fetch('/api/designs/'+r.id+'/mesh',{method:'POST',body:lastPreview}); setStatus('✓ published — <a href="/">view in gallery</a>','#7CFC9A'); }
     else setStatus('publish failed','#ff8a8a'); }catch(e){ setStatus('publish failed: '+e.message,'#ff8a8a'); }
 }
 document.getElementById('pub').onclick=publish;
 
+// ---------- sliders: exaggeration is live on the GPU; thickness bakes on regenerate ----------
+document.getElementById('ex').addEventListener('input',()=>{
+  const v=parseFloat(document.getElementById('ex').value);
+  document.getElementById('exv').textContent=v.toFixed(1);
+  if(group){ EX_UNI.value=v/bakedExag; if(Math.abs(v-bakedExag)>0.01) markDirty(); else document.getElementById('bakehint').style.display='none'; }
+});
+document.getElementById('rw').addEventListener('input',()=>{
+  document.getElementById('rwv').textContent=parseFloat(document.getElementById('rw').value).toFixed(1);
+  markDirty();
+});
+
+// ---------- debounced autosearch (Nominatim policy: max 1 req/s) ----------
+function debounce(fn,ms){ let t; return ()=>{ clearTimeout(t); t=setTimeout(fn,ms); }; }
+let lastQ='', lastWQ='';
+document.getElementById('q').addEventListener('input',debounce(()=>{
+  const v=document.getElementById('q').value.trim();
+  if(v.length>=3&&v!==lastQ){ lastQ=v; doSearch(); }
+},1000));
+document.getElementById('wq').addEventListener('input',debounce(()=>{
+  const v=document.getElementById('wq').value.trim();
+  if(v.length>=3&&v!==lastWQ){ lastWQ=v; wpSearch(); }
+},1000));
+
 // ---------- entry ----------
-function afterReady(){ /* nothing extra; features fired on enterEdit */ }
-initView();
+function afterReady(){
+  console.log('[tm] engine ready');
+  if(!editing) setStatus('✓ ready — search a course or plan a ride','#7CFC9A');
+}
+initView(); buildFeatChecks(); syncLayerbox();
 setStatus('<span class="spin"></span>loading engine…','#9fd');
 (async()=>{
   if(params.get('design')){ try{ const d=await (await fetch('/api/designs/'+params.get('design'))).json();
-    document.getElementById('h1').textContent='⛳ '+d.name; lastPlace=d.place||''; if(d.params&&d.params.exag!=null)document.getElementById('ex').value=d.params.exag;
-    enterEdit(d.bbox); }catch(e){ log('could not load design'); } }
+    lastPlace=d.place||''; if(d.params&&d.params.exag!=null){document.getElementById('ex').value=d.params.exag;document.getElementById('exv').textContent=(+d.params.exag).toFixed(1);}
+    if(d.params&&d.params.routeW){document.getElementById('rw').value=d.params.routeW;document.getElementById('rwv').textContent=(+d.params.routeW).toFixed(1);}
+    if(d.params&&d.params.hide){ const hid=new Set(d.params.hide);
+      FEATGROUPS.forEach(g=>{ const key=g.key==='marks'?'marks':g.objs[0];
+        if(hid.has(key)||g.objs.some(o=>hid.has(o))) featOn[g.key]=false; });
+      buildFeatChecks(); }
+    if(d.params&&d.params.route){ routePts=d.params.route; setMode('ride'); setKind(d.params.kind||d.type||'bike');
+      if(d.params.wpts&&d.params.wpts.length){ wayPts=d.params.wpts; drawMode=true; cropTouched=true; updateDrawInfo(); }
+      document.getElementById('h1').textContent=KEMOJI[rideKind]+' '+d.name;
+      document.getElementById('gpxinfo').textContent='✓ loaded route · '+routeKm(routePts).toFixed(1)+' km';
+      enterEdit(d.bbox,true,true); }
+    else{ document.getElementById('h1').textContent='⛳ '+d.name; enterEdit(d.bbox,false,true); } }catch(e){ log('could not load design'); } }
   else if(params.get('bbox')){ enterEdit(params.get('bbox').split(',').map(Number)); }
   else if(params.get('q')){ document.getElementById('q').value=params.get('q'); doSearch(); }
 })();

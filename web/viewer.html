@@ -100,7 +100,11 @@ function download(){
   if(!design) return;
   document.getElementById('dl').disabled=true; st('<span class="spin"></span>preparing 3MF (first time loads the engine)…');
   ensureWorker();
-  const fire=()=>worker.postMessage({type:'generate',bbox:design.bbox,exag:(design.params&&design.params.exag)||4});
+  const fire=()=>{ const p=design.params||{};
+    const msg={type:'generate',bbox:design.bbox,exag:p.exag||4};
+    if(p.hide) msg.hide=p.hide;
+    if(p.route){ msg.route=p.route; msg.kind=p.kind||design.type; msg.holes=[]; if(p.routeW) msg.routeW=p.routeW; }
+    worker.postMessage(msg); };
   if(workerReadyOnce) fire(); else pendingFire=fire;
 }
 load();
