@@ -47,9 +47,31 @@ def _db():
     finally:
         c.close()
 
+def _ensure_pg_database():
+    """Self-provision: if DATABASE_URL names a database that doesn't exist yet,
+    create it by connecting to the instance's default 'postgres' database."""
+    try:
+        psycopg2.connect(DATABASE_URL).close()
+        return
+    except psycopg2.OperationalError as e:
+        if "does not exist" not in str(e):
+            raise
+    from urllib.parse import urlsplit
+    u = urlsplit(DATABASE_URL)
+    dbname = (u.path or "/").lstrip("/") or "postgres"
+    admin = DATABASE_URL.replace("/" + dbname, "/postgres", 1)
+    c = psycopg2.connect(admin)
+    c.autocommit = True
+    with c.cursor() as cur:
+        cur.execute('CREATE DATABASE "%s"' % dbname.replace('"', ""))
+    c.close()
+    print("[db] created database %r" % dbname)
+
 def _init_designs():
     os.makedirs(THUMB_DIR, exist_ok=True)
     os.makedirs(MESH_DIR, exist_ok=True)
+    if USE_PG:
+        _ensure_pg_database()
     with _db() as cur:
         cur.execute("""CREATE TABLE IF NOT EXISTS designs(
             id TEXT PRIMARY KEY, type TEXT, name TEXT, place TEXT, bbox TEXT,
