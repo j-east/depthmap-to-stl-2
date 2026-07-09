@@ -41,6 +41,16 @@ function initView(){
   scene=new THREE.Scene(); scene.background=new THREE.Color(0x0d1015);
   camera=new THREE.PerspectiveCamera(42,el.clientWidth/el.clientHeight,0.1,5000); camera.up.set(0,0,1); camera.position.set(142,-270,210);
   controls=new THREE.OrbitControls(camera,cv); controls.enableDamping=true; controls.autoRotate=true; controls.autoRotateSpeed=1.0;
+  controls.enableZoom=false;
+  cv.addEventListener('wheel',e=>{ e.preventDefault();       // two-finger pan / pinch zoom
+    if(e.ctrlKey){ const f=Math.exp(e.deltaY*0.004);
+      camera.position.sub(controls.target).multiplyScalar(f).add(controls.target); }
+    else{ const dist=camera.position.distanceTo(controls.target);
+      const scale=2*dist*Math.tan(camera.fov*Math.PI/360)/cv.clientHeight;
+      const move=new THREE.Vector3().setFromMatrixColumn(camera.matrix,0).multiplyScalar(e.deltaX*scale)
+        .add(new THREE.Vector3().setFromMatrixColumn(camera.matrix,1).multiplyScalar(-e.deltaY*scale));
+      camera.position.add(move); controls.target.add(move); }
+  },{passive:false});
   scene.add(new THREE.HemisphereLight(0xffffff,0x223,0.85)); const d=new THREE.DirectionalLight(0xffffff,0.7); d.position.set(-1,-1,2); scene.add(d);
   addEventListener('resize',()=>{renderer.setSize(el.clientWidth,el.clientHeight);camera.aspect=el.clientWidth/el.clientHeight;camera.updateProjectionMatrix();});
   cv.addEventListener('pointerdown',()=>controls.autoRotate=false);
@@ -103,7 +113,10 @@ function download(){
   const fire=()=>{ const p=design.params||{};
     const msg={type:'generate',bbox:design.bbox,exag:p.exag||4};
     if(p.hide) msg.hide=p.hide;
-    if(p.route){ msg.route=p.route; msg.kind=p.kind||design.type; msg.holes=[]; if(p.routeW) msg.routeW=p.routeW; }
+    if(p.holes) msg.holes=p.holes;     // the creator's edited hole labels, strays excluded
+    if(p.title) msg.title=p.title; if(p.subtitle) msg.subtitle=p.subtitle;
+    if(p.pitch) msg.pitch=p.pitch;
+    if(p.route){ msg.route=p.route; msg.kind=p.kind||design.type; msg.holes=[]; if(p.routeW) msg.routeW=p.routeW; if(p.routeH) msg.routeH=p.routeH; }
     worker.postMessage(msg); };
   if(workerReadyOnce) fire(); else pendingFire=fire;
 }

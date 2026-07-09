@@ -77,8 +77,21 @@ function packMesh(objsMap){
   return out;
 }
 
+let lastGen=null;                    // bbox/exag of the last full build (dem_bytes etc. persist as pyodide globals)
 onmessage = async (ev)=>{
   const m=ev.data;
+  if(m.type==='route'){              // live thickness/height: remesh only the ribbon
+    await ready;
+    if(!lastGen) return;
+    try{
+      const [w,s,e,n]=lastGen.bbox;
+      const res=pyodide.runPython(`route_layer(dem_bytes,0,0,[${w},${s},${e},${n}],${lastGen.exag},8.0,route_json,${+m.routeW||2.4},${+m.routeH||1})`);
+      const out=res.toJs(); res.destroy();
+      const verts=out.get('verts').buffer, tris=out.get('tris').buffer;
+      postMessage({type:'route', verts, tris, routeH:+m.routeH||1}, [verts,tris]);
+    }catch(err){ postMessage({type:'error',msg:err.message}); }
+    return;
+  }
   if(m.type==='features'){           // for the pre-render edit step (plan + holes), no build
     await ready;
     try{ const [w,s,e,n]=m.bbox; const ff=await fetchFeatures(w,s,e,n);
@@ -91,14 +104,14 @@ onmessage = async (ev)=>{
   const t0=Date.now();
   try{
     const [w,s,e,n]=m.bbox;
-    postMessage({type:'progress',msg:'fetching terrain + OSM…'});
+    postMessage({type:'progress',msg:'fetching terrain + OSM…',pct:6});
     const [dem,ff]=await Promise.all([fetchDEM(w,s,e,n), fetchFeatures(w,s,e,n)]);
-    const route=m.route||[], kind=m.kind||'bike', hide=m.hide||[], routeW=+m.routeW||2.4;
+    const route=m.route||[], kind=m.kind||'bike', hide=m.hide||[], routeW=+m.routeW||2.4, routeH=+m.routeH||1.0;
     hide.forEach(k=>{ delete ff.feats[k]; });        // excluded features never reach the mesher
     // m.holes = user-edited labels from the edit step; ride boards never get golf numbers
     const holes=route.length ? (m.holes||[]) : (m.holes||ff.holes);
     const counts=Object.fromEntries(Object.entries(ff.feats).map(([k,v])=>[k,v.length]));
-    postMessage({type:'progress',msg:`DEM ${dem.W}x${dem.H}, ${holes.length} holes, ${JSON.stringify(counts)} (${((Date.now()-t0)/1000).toFixed(1)}s)`});
+    postMessage({type:'progress',msg:`DEM ${dem.W}x${dem.H}, ${holes.length} holes, ${JSON.stringify(counts)} (${((Date.now()-t0)/1000).toFixed(1)}s)`,pct:30});
     const t1=Date.now();
     pyodide.globals.set('dem_bytes',dem.bytes);
     pyodide.globals.set('feats_json',JSON.stringify(ff.feats));
@@ -106,9 +119,14 @@ onmessage = async (ev)=>{
     pyodide.globals.set('font_bytes',FONT);
     pyodide.globals.set('route_json',JSON.stringify(route));
     pyodide.globals.set('hide_json',JSON.stringify(hide));
-    const call=p=>`golf_board(dem_bytes,0,0,[${w},${s},${e},${n}],feats_json,${m.exag},8.0,holes_json,font_bytes,${p},route_json,'${kind}',hide_json,${routeW})`;
-    const res=pyodide.runPython(call('None'));
+    pyodide.globals.set('title_s',(m.title||'').toString());
+    pyodide.globals.set('subtitle_s',(m.subtitle||'').toString());
+    const finePitch=+m.pitch?+m.pitch:'None';
+    const call=p=>`golf_board(dem_bytes,0,0,[${w},${s},${e},${n}],feats_json,${m.exag},8.0,holes_json,font_bytes,${p},route_json,'${kind}',hide_json,${routeW},${routeH},title_s,subtitle_s)`;
+    postMessage({type:'progress',msg:'meshing the board…',pct:35});
+    const res=pyodide.runPython(call(finePitch));
     const out=res.toJs(); res.destroy();
+    postMessage({type:'progress',msg:'building preview…',pct:78});
     const objects=out.get('objects').map(o=>({
       name:o.get('name'), color:o.get('color'), ntri:o.get('ntri'),
       verts:o.get('verts').buffer, tris:o.get('tris').buffer}));
@@ -117,6 +135,7 @@ onmessage = async (ev)=>{
     const pres=pyodide.runPython(call('0.5'));
     const pout=pres.toJs(); pres.destroy();
     const preview=packMesh(pout.get('objects'));
+    lastGen={bbox:m.bbox, exag:m.exag};
     const transfer=objects.flatMap(o=>[o.verts,o.tris]); transfer.push(tmf, preview);
     postMessage({type:'done', objects, tmf, preview, board:out.get('board'),
                  buildMs:Date.now()-t1}, transfer);

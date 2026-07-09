@@ -76,7 +76,7 @@
   <div id="editpanel" style="display:none">
     <button class="go" id="gen">✓ Generate board</button>
     <div class="tip" id="tipGolf">Drag the <b>crop box</b> edges/corners to frame the board. Drag <b>hole numbers</b> to move them; click the ✕ to delete a stray one (e.g. a practice course).</div>
-    <div class="tip" id="tipRide" style="display:none"><b>Click the map</b> to drop waypoints — the route snaps to roads. <b>Drag the route</b> to reshape it (Google-Maps style), drag waypoints to move them, ✕ to remove. Scroll to zoom, drag outside the crop box to pan. Then frame with the <b>crop box</b>.</div>
+    <div class="tip" id="tipRide" style="display:none"><b>Click the map</b> to drop waypoints — the route snaps to roads. <b>Drag the route</b> to reshape it (Google-Maps style), drag waypoints to move them, ✕ to remove. Drag or two-finger scroll to pan, pinch to zoom. Frame with the <b>crop box</b> (drag its edges).</div>
   </div>
 
   <div id="donepanel" style="display:none">
@@ -85,18 +85,28 @@
     <button class="go" id="pub" style="margin-top:10px;width:100%">↑ Publish to gallery</button>
   </div>
   <div id="layerbox" style="display:none">
+    <label>board title (on the plaque)</label>
+    <input id="btitle" placeholder="e.g. Pebble Beach" autocomplete="off">
     <label>features on the board</label>
     <div id="featchecks"></div>
     <div id="ribbonrow" style="display:none">
       <label>route thickness: <span id="rwv">2.4</span> mm</label>
       <input type="range" id="rw" min="1.2" max="5" step="0.2" value="2.4" style="width:100%">
+      <label>route height: <span id="rhv">1.0</span> mm</label>
+      <input type="range" id="rh" min="0.4" max="3" step="0.2" value="1.0" style="width:100%">
     </div>
     <label>vertical exaggeration: <span id="exv">4.0</span>×</label>
     <input type="range" id="ex" min="1" max="8" step="0.5" value="4" style="width:100%">
-    <div class="tip" id="bakehint" style="display:none;color:#ffb86b">live preview — hit ↻ Regenerate to bake into the print file</div>
+    <label>resolution: <span id="resv">standard</span></label>
+    <input type="range" id="res" min="0" max="3" step="1" value="1" style="width:100%">
+    <div class="tip" id="reswarn" style="display:none;color:#ffb86b">hi-fi meshes take several minutes to build and make big downloads</div>
+    <div class="tip" id="bakehint" style="display:none;color:#9fd">live preview — bakes in automatically when you download or publish</div>
   </div>
-  <label class="tog"><input type="checkbox" id="spin" onchange="controls.autoRotate=this.checked"><span class="sw"></span> auto-rotate</label>
+  <label class="tog"><input type="checkbox" id="spin" checked onchange="controls.autoRotate=this.checked"><span class="sw"></span> auto-rotate</label>
   <div id="status"></div>
+  <div id="pbar" style="display:none;height:6px;background:#22283a;border-radius:4px;overflow:hidden;margin-top:8px">
+    <div id="pfill" style="height:100%;width:0%;background:linear-gradient(90deg,#2563eb,#4dd08a);transition:width .4s"></div>
+  </div>
   <div id="log"></div>
 </div>
 <div id="view"><canvas id="plan"></canvas>
@@ -111,6 +121,15 @@
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script>
 const log=(m)=>{const l=document.getElementById('log');l.textContent+=m+"\n";console.log(m);};
+// progress bar: jumps to each worker milestone, creeps between them so it never looks stuck
+let pcur=0,pgoal=0,pTimer=null;
+function pbar(p){
+  const bar=document.getElementById('pbar'), fill=document.getElementById('pfill');
+  if(p==null){ bar.style.display='none'; clearInterval(pTimer); pTimer=null; pcur=pgoal=0; fill.style.width='0%'; return; }
+  bar.style.display='block'; pgoal=Math.max(pgoal,p); pcur=Math.max(pcur,p); fill.style.width=pcur+'%';
+  if(!pTimer) pTimer=setInterval(()=>{ const cap=Math.min(pgoal+15,96);
+    if(pcur<cap){ pcur+=Math.max(0.25,(cap-pcur)*0.05); document.getElementById('pfill').style.width=pcur+'%'; } },300);
+}
 const setStatus=(h,c)=>{const s=document.getElementById('status');s.innerHTML=h;s.style.color=c||'#9a9ab0';};
 const params=new URLSearchParams(location.search);
 let lastPlace=params.get('name')||'';
@@ -127,6 +146,10 @@ function setMode(m){
   document.getElementById('ridepanel').style.display=m==='ride'?'block':'none';
   if(!editing) document.getElementById('h1').textContent=m==='ride'?KEMOJI[rideKind]+' Create a ride board':'⛳ Create a board';
   syncLayerbox();
+  // carry the search text across modes and re-run it there
+  const q=document.getElementById('q'), wq=document.getElementById('wq');
+  if(m==='ride'&&q.value.trim()&&q.value.trim()!==wq.value.trim()){ wq.value=q.value.trim(); wpSearch(); }
+  else if(m==='golf'&&wq.value.trim()&&wq.value.trim()!==q.value.trim()){ q.value=wq.value.trim(); doSearch(); }
 }
 function setKind(k){
   rideKind=k;
@@ -204,8 +227,6 @@ async function reroute(){
     console.log('[tm] osrm ok:', Math.round(rt.distance)+'m,', rt.geometry.coordinates.length, 'pts,', rt.legs.length, 'legs');
     routePts=simplify(rt.geometry.coordinates.map(c=>[c[0],c[1]]));
     lastLegs=rt.legs.map(l=>l.distance);
-    if(!cropTouched){ const lons=routePts.map(p=>p[0]),lats=routePts.map(p=>p[1]);
-      cropLL=expand([Math.min(...lons),Math.min(...lats),Math.max(...lons),Math.max(...lats)],1.25); }
     updateDrawInfo(rt.distance);
     setStatus('drag the route to reshape · Generate when ready','#9a9ab0');
   }catch(e){ setStatus('✕ '+e.message,'#ff8a8a'); }
@@ -213,7 +234,8 @@ async function reroute(){
 }
 function addWaypoint(lon,lat,name){
   wayPts.push({lon,lat}); drawMode=true;
-  if(name&&wayPts.length===1){ lastPlace=name; document.getElementById('h1').textContent=KEMOJI[rideKind]+' '+name.split(',')[0]; }
+  if(name&&wayPts.length===1){ lastPlace=name; document.getElementById('h1').textContent=KEMOJI[rideKind]+' '+name.split(',')[0];
+    if(!document.getElementById('btitle').value.trim()) document.getElementById('btitle').value=name.split(',')[0]; }
   updateDrawInfo(); reroute();
 }
 async function wpSearch(){
@@ -242,6 +264,7 @@ document.getElementById('gpx').onchange=async e=>{
   routePts=simplify(raw);
   lastPlace=f.name.replace(/\.gpx$/i,'').replace(/[_-]+/g,' ');
   document.getElementById('h1').textContent=KEMOJI[rideKind]+' '+lastPlace;
+  document.getElementById('btitle').value=lastPlace;
   document.getElementById('gpxinfo').textContent='✓ '+raw.length.toLocaleString()+' points · '+routeKm(routePts).toFixed(1)+' km';
   const lons=routePts.map(p=>p[0]),lats=routePts.map(p=>p[1]);
   enterEdit([Math.min(...lons),Math.min(...lats),Math.max(...lons),Math.max(...lats)],true);
@@ -249,13 +272,19 @@ document.getElementById('gpx').onchange=async e=>{
 
 // ---------- 3D view (result) ----------
 let renderer,scene,camera,controls,group,lastPreview=null,splitEdit=false;
-// live vertical exaggeration: GPU rescales terrain above the base plate (z>0 stretches
-// around uBase; the flat bottom stays put) — no remesh, instant. Regenerate bakes it.
-const EX_UNI={value:1}, BASE_UNI={value:8};
-function patchMat(m){ m.onBeforeCompile=s=>{ s.uniforms.uK=EX_UNI; s.uniforms.uBase=BASE_UNI;
-  s.vertexShader='uniform float uK;uniform float uBase;\n'+s.vertexShader.replace('#include <begin_vertex>',
-    '#include <begin_vertex>\nif(transformed.z>0.001){transformed.z=uBase+(transformed.z-uBase)*uK;}'); }; }
-let bakedExag=4;
+// live vertical exaggeration: GPU rescales TERRAIN above the base plate while each
+// decal keeps its true printed proud height (uC = baked offset above terrain, factored
+// out before scaling and re-added as uH after — for the route, uH is a live slider).
+const EX_UNI={value:1}, BASE_UNI={value:8}, ROUTE_H_UNI={value:1};
+const PROUD={rough:0,water:0.15,route:1.0,start:1.4,outline:0.9,numbers:1.1,
+             fairway:0.5,tee:0.6,green:0.8,bunker:0.6,road:0.4,rail:0.7,cartpath:0.5};
+function patchMat(m,c,hUni){ const uC={value:c||0}, uH=hUni||uC;
+  m.onBeforeCompile=s=>{ s.uniforms.uK=EX_UNI; s.uniforms.uBase=BASE_UNI; s.uniforms.uC=uC; s.uniforms.uH=uH;
+    s.vertexShader='uniform float uK;uniform float uBase;uniform float uC;uniform float uH;\n'
+      +s.vertexShader.replace('#include <begin_vertex>',
+      '#include <begin_vertex>\nif(transformed.z>0.001){transformed.z=uBase+(transformed.z-uBase-uC)*uK+uH;}'); };
+  m.customProgramCacheKey=()=>'tmproud'; }
+let bakedExag=4, bakedRouteH=1;
 // feature groups: checkbox -> instant mesh visibility + excluded from the next generate
 const FEATGROUPS=[
   {key:'turf',     label:'⛳ course turf',        objs:['fairway','tee','green','bunker'], golf:true},
@@ -264,6 +293,7 @@ const FEATGROUPS=[
   {key:'cartpath', label:'🥾 trails & paths',     objs:['cartpath']},
   {key:'rail',     label:'🚂 railways',           objs:['rail']},
   {key:'water',    label:'💧 water',              objs:['water']},
+  {key:'plaque',   label:'🏷 title plaque',       objs:['plaque','title']},
 ];
 const featOn={}; FEATGROUPS.forEach(g=>featOn[g.key]=true);
 function hideList(){ return FEATGROUPS.filter(g=>!featOn[g.key])
@@ -271,7 +301,9 @@ function hideList(){ return FEATGROUPS.filter(g=>!featOn[g.key])
 function applyVisibility(){ if(!group)return;
   const off=new Set(FEATGROUPS.filter(g=>!featOn[g.key]).flatMap(g=>g.objs));
   group.children.forEach(m=>{ if(m.name) m.visible=!off.has(m.name); }); }
-function markDirty(){ if(group) document.getElementById('bakehint').style.display='block'; }
+let dirty=false, pendingAction=null;   // 'download' | 'publish' — resumes after an auto-rebuild
+function markDirty(){ dirty=true; if(group) document.getElementById('bakehint').style.display='block'; }
+function clearDirty(){ dirty=false; document.getElementById('bakehint').style.display='none'; }
 function buildFeatChecks(){
   const box=document.getElementById('featchecks'); box.innerHTML='';
   FEATGROUPS.forEach(g=>{
@@ -296,10 +328,28 @@ function initView(){
   renderer.domElement.style.cssText='position:absolute;top:0;right:0;width:100%;height:100%'; el.appendChild(renderer.domElement);
   scene=new THREE.Scene(); scene.background=new THREE.Color(0x11151a);
   camera=new THREE.PerspectiveCamera(45,el.clientWidth/el.clientHeight,0.1,5000); camera.up.set(0,0,1); camera.position.set(142,-270,210);
-  controls=new THREE.OrbitControls(camera,renderer.domElement); controls.enableDamping=true; controls.dampingFactor=0.08; controls.autoRotateSpeed=1.2;
+  controls=new THREE.OrbitControls(camera,renderer.domElement); controls.enableDamping=true; controls.dampingFactor=0.08; controls.autoRotateSpeed=1.2; controls.autoRotate=true;
+  controls.enableZoom=false; wirePanZoom(renderer.domElement,camera,controls);
   scene.add(new THREE.HemisphereLight(0xffffff,0x223,0.75)); const d=new THREE.DirectionalLight(0xffffff,0.75); d.position.set(-1,-1,2); scene.add(d);
   addEventListener('resize',()=>{resize3D(splitEdit?0.5:1);fitPlan();drawPlan();});
   (function loop(){requestAnimationFrame(loop);if(controls)controls.update();renderer.render(scene,camera);})();
+}
+// 3D view: two-finger scroll pans (target+camera shift in the view plane), pinch zooms —
+// same gestures as the map editor. Left-drag orbits via OrbitControls as before.
+function wirePanZoom(el,cam,ctl){
+  el.addEventListener('wheel',e=>{ e.preventDefault();
+    if(e.ctrlKey){
+      const f=Math.exp(e.deltaY*0.004);
+      cam.position.sub(ctl.target).multiplyScalar(f).add(ctl.target);
+    }else{
+      const dist=cam.position.distanceTo(ctl.target);
+      const scale=2*dist*Math.tan(cam.fov*Math.PI/360)/el.clientHeight;
+      const right=new THREE.Vector3().setFromMatrixColumn(cam.matrix,0).multiplyScalar(e.deltaX*scale);
+      const up=new THREE.Vector3().setFromMatrixColumn(cam.matrix,1).multiplyScalar(-e.deltaY*scale);
+      const move=right.add(up);
+      cam.position.add(move); ctl.target.add(move);
+    }
+  },{passive:false});
 }
 function showObjects(objs){
   const g=new THREE.Group();
@@ -307,7 +357,9 @@ function showObjects(objs){
     geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(o.verts),3));
     geo.setIndex(new THREE.BufferAttribute(new Uint32Array(o.tris),1)); geo.computeVertexNormals();
     const mat=new THREE.MeshStandardMaterial({color:new THREE.Color(o.color),roughness:0.92,side:THREE.DoubleSide});
-    patchMat(mat); const mesh=new THREE.Mesh(geo,mat); mesh.name=o.name||''; g.add(mesh);});
+    const c=o.name==='route'?bakedRouteH:(PROUD[o.name]!=null?PROUD[o.name]:0);
+    patchMat(mat,c,o.name==='route'?ROUTE_H_UNI:null);
+    const mesh=new THREE.Mesh(geo,mat); mesh.name=o.name||''; g.add(mesh);});
   const box=new THREE.Box3().setFromObject(g),c=box.getCenter(new THREE.Vector3()); g.position.set(-c.x,-c.y,-c.z);
   const old=group; group=g; scene.add(g); if(old){scene.remove(old);old.traverse(o=>{if(o.geometry)o.geometry.dispose();});}
   applyVisibility();
@@ -332,6 +384,7 @@ async function doSearch(){
 }
 function pickCourse(c){
   lastPlace=c.full||c.name; document.getElementById('h1').textContent='⛳ '+c.name;
+  document.getElementById('btitle').value=c.name;
   let {minlon,minlat,maxlon,maxlat}=c.b;
   if(maxlat-minlat<0.004||maxlon-minlon<0.004){const cy=(minlat+maxlat)/2,cx=(minlon+maxlon)/2,dy=0.0075,dx=0.0075/Math.cos(cy*Math.PI/180);minlat=cy-dy;maxlat=cy+dy;minlon=cx-dx;maxlon=cx+dx;}
   enterEdit([minlon,minlat,maxlon,maxlat]);     // guess bbox
@@ -341,6 +394,7 @@ function enterEditFromBbox(){ const v=document.getElementById('bb').value.split(
 // ---------- the EDIT step: 2D plan + crop box + draggable/deletable hole numbers ----------
 const plan=document.getElementById('plan'); const px=plan.getContext('2d');
 let editing=false, VP=null, cropLL=null, feats={}, labels=[], scaleM=1, offX=0, offY=0, mPerLon=1, mPerLat=111320;
+let guessBB=null, pendingLabelHoles=null;   // course guess bbox (stray-hole filter) / saved labels from a remix
 let drag=null;   // {kind:'crop-<handle>'|'label', idx}
 function expand(bb,f){ const cx=(bb[0]+bb[2])/2, cy=(bb[1]+bb[3])/2; return [cx+(bb[0]-cx)*f, cy+(bb[1]-cy)*f, cx+(bb[2]-cx)*f, cy+(bb[3]-cy)*f]; }
 // Web-Mercator plan projection (aligns with OSM raster tiles); scaleM = px per mercator metre
@@ -388,6 +442,7 @@ function enterEdit(guess,isRide,exact){
   // exact: guess IS the crop (remixing a saved design — don't re-expand it)
   if(exact){ VP=expand(guess,1.3); cropLL=guess.slice(); }
   else{ VP=expand(guess,isRide?1.5:1.7); cropLL=expand(guess,isRide?1.25:1.5); }
+  guessBB=guess.slice();
   editing=true; document.getElementById('editpanel').style.display='block'; document.getElementById('donepanel').style.display='none';
   document.getElementById('layerbox').style.display='block'; syncLayerbox();
   document.getElementById('tipGolf').style.display=MODE==='ride'?'none':'block';
@@ -409,8 +464,20 @@ function enterEdit(guess,isRide,exact){
 function onFeatures(m){
   feats=m.feats||{}; if(m.bbox) featBB=m.bbox;
   // only build hole labels on first load — refetches (pan/zoom) must not clobber user edits
-  if(MODE!=='ride'&&!labels.length)
-    labels=(m.holes||[]).filter(h=>h.num).map(h=>{const ll=midLL(h.pts);return {num:h.num,pts:h.pts,lon:ll[0],lat:ll[1],del:false};});
+  if(MODE!=='ride'&&!labels.length){
+    if(pendingLabelHoles){          // remixing a published design: restore its edited labels
+      labels=pendingLabelHoles.map(h=>({num:h.num,pts:h.pts,lon:h.lx,lat:h.ly,del:false}));
+      pendingLabelHoles=null;
+    }else{
+      // default to holes inside THIS course's bbox — neighbours' holes stay out
+      const all=(m.holes||[]).filter(h=>h.num);
+      const gb=guessBB?expand(guessBB,1.15):null;
+      const inBB=h=>{ if(!gb) return true; const ll=midLL(h.pts);
+        return ll[0]>=gb[0]&&ll[0]<=gb[2]&&ll[1]>=gb[1]&&ll[1]<=gb[3]; };
+      let keep=all.filter(inBB); if(!keep.length) keep=all;    // over-tight guess: keep everything
+      labels=keep.map(h=>{const ll=midLL(h.pts);return {num:h.num,pts:h.pts,lon:ll[0],lat:ll[1],del:false};});
+    }
+  }
   setStatus(MODE==='ride'?(drawMode||routePts?'adjust, then Generate':'click the map to drop waypoints'):labels.length+' holes · drag to adjust, then Generate','#9a9ab0');
   fitPlan(); drawPlan();
 }
@@ -499,8 +566,8 @@ plan.addEventListener('pointerdown',e=>{ const r=plan.getBoundingClientRect(),x=
   if(h&&h!=='move'){ cropTouched=true; drag={kind:'crop',h,sx:x,sy:y,start:cropLL.slice()}; return; }
   if(MODE==='ride'&&drawMode){ const rh=routeHit(x,y);       // grab the route itself
     if(rh){ drag={kind:'route',leg:rh.leg,gx:x,gy:y}; drawPlan(); return; } }
-  // click vs drag, resolved on move: inside crop -> move crop, outside -> pan the map
-  drag={kind:'tap',fallback:h==='move'?'crop':'pan',sx:x,sy:y,start:cropLL.slice(),vp0:VP.slice()};
+  // click vs drag, resolved on move: any body drag pans the map (crop moves via its handles)
+  drag={kind:'tap',fallback:'pan',sx:x,sy:y,start:cropLL.slice(),vp0:VP.slice()};
 });
 plan.addEventListener('pointermove',e=>{ if(!drag)return; const r=plan.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
   if(drag.kind==='tap'){
@@ -539,10 +606,16 @@ function fitView(){ if(!VP)return;
     bb=[Math.min(...lons),Math.min(...lats),Math.max(...lons),Math.max(...lats)]; }
   VP=expand(bb,1.35); fitPlan(); drawPlan(); scheduleRefetch(); }
 plan.addEventListener('wheel',e=>{ if(!editing)return; e.preventDefault();
-  const r=plan.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top, ll=px2ll(x,y);
-  const f=e.deltaY>0?1.18:1/1.18, ax=mercX(ll[0]), ay=mercY(ll[1]);
-  VP=[invX(ax+(mercX(VP[0])-ax)*f), invY(ay+(mercY(VP[1])-ay)*f), invX(ax+(mercX(VP[2])-ax)*f), invY(ay+(mercY(VP[3])-ay)*f)];
-  fitPlan(); drawPlan(); scheduleRefetch();
+  if(e.ctrlKey){                       // pinch -> gentle zoom, anchored at cursor
+    const r=plan.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top, ll=px2ll(x,y);
+    const f=Math.exp(e.deltaY*0.004), ax=mercX(ll[0]), ay=mercY(ll[1]);
+    VP=[invX(ax+(mercX(VP[0])-ax)*f), invY(ay+(mercY(VP[1])-ay)*f), invX(ax+(mercX(VP[2])-ax)*f), invY(ay+(mercY(VP[3])-ay)*f)];
+    fitPlan();
+  }else{                               // two-finger scroll / wheel -> pan
+    const dx=e.deltaX/scaleM, dy=e.deltaY/scaleM;
+    VP=[invX(mercX(VP[0])+dx), invY(mercY(VP[1])-dy), invX(mercX(VP[2])+dx), invY(mercY(VP[3])-dy)];
+  }
+  drawPlan(); scheduleRefetch();
 },{passive:false});
 // refetch OSM context when the viewport leaves the area we've fetched (debounced)
 let featBB=null, refetchT=null;
@@ -559,8 +632,10 @@ worker.onerror=e=>{ console.error('[tm] worker crashed:',e.message,e.filename,e.
 worker.onmessage=(ev)=>{ const m=ev.data; console.log('[tm] worker →',m.type,m.msg||'');
   if(m.type==='ready'){ workerReady=true; if(pendingFeatures){worker.postMessage({type:'features',bbox:pendingFeatures});pendingFeatures=null;} afterReady(); }
   else if(m.type==='features'){ onFeatures(m); }
-  else if(m.type==='progress'){ setStatus('<span class="spin"></span>'+m.msg,'#9fd'); log(m.msg); }
-  else if(m.type==='error'){ setStatus('✕ '+m.msg,'#ff8a8a'); document.getElementById('gen').disabled=false; }
+  else if(m.type==='route'){ swapRouteMesh(m); }
+  else if(m.type==='progress'){ setStatus('<span class="spin"></span>'+m.msg,'#9fd'); log(m.msg); if(m.pct)pbar(m.pct); }
+  else if(m.type==='error'){ setStatus('✕ '+m.msg,'#ff8a8a'); pendingAction=null; pbar(null);
+    const gb=document.getElementById('gen'); gb.disabled=false; gb.textContent=gb.dataset.prev||'✓ Generate board'; }
   else if(m.type==='done'){
     showObjects(m.objects); lastPreview=m.preview||null; editing=false;
     document.getElementById('plan').style.display='none'; document.getElementById('zoomctl').style.display='none';
@@ -568,25 +643,36 @@ worker.onmessage=(ev)=>{ const m=ev.data; console.log('[tm] worker →',m.type,m
     document.getElementById('zoomctl').style.right='16px';
     renderer.domElement.style.display='block'; renderer.domElement.style.width='100%'; resize3D(1);
     document.getElementById('gen').textContent='✓ Generate board';
-    EX_UNI.value=1; document.getElementById('bakehint').style.display='none';
+    EX_UNI.value=1; ROUTE_H_UNI.value=bakedRouteH; clearDirty();
     document.getElementById('editpanel').style.display='none'; document.getElementById('donepanel').style.display='block';
     const blob=new Blob([m.tmf],{type:'model/3mf'}); const dla=document.getElementById('dla');
     dla.href=URL.createObjectURL(blob); dla.download=((lastPlace||'board').split(',')[0].trim().replace(/\s+/g,'_')||'board')+'.3mf';
     document.getElementById('dl').style.display='block';
+    pbar(100); setTimeout(()=>pbar(null),700);
     let tri=0;m.objects.forEach(o=>tri+=o.ntri); setStatus('✓ done in '+((performance.now()-tStart)/1000).toFixed(1)+'s · '+tri.toLocaleString()+' tris','#7CFC9A');
     document.getElementById('gen').disabled=false;
+    if(pendingAction==='download'){ pendingAction=null; document.getElementById('dla').click(); }
+    else if(pendingAction==='publish'){ pendingAction=null; publish(); }
   }};
-document.getElementById('gen').onclick=()=>{
+function regenerate(){
   if(!workerReady)return;
   if(MODE==='ride'&&(!routePts||routePts.length<2)){ setStatus('draw at least 2 waypoints or upload a GPX first','#ffb86b'); return; }
   const ex=parseFloat(document.getElementById('ex').value);
   const holes=labels.filter(L=>!L.del).map(L=>({pts:L.pts,num:L.num,lx:L.lon,ly:L.lat}));
-  document.getElementById('gen').disabled=true; setStatus('<span class="spin"></span>building…','#9fd'); tStart=performance.now();
+  const gb=document.getElementById('gen'); gb.dataset.prev=gb.textContent;
+  gb.disabled=true; gb.innerHTML='<span class="spin"></span> Generating…';
+  setStatus('<span class="spin"></span>building…','#9fd'); tStart=performance.now();
   const msg={type:'generate',bbox:cropLL,exag:ex,holes,hide:hideList()};
-  if(MODE==='ride'&&routePts){ msg.route=routePts; msg.kind=rideKind; msg.holes=[]; msg.routeW=parseFloat(document.getElementById('rw').value); }
-  bakedExag=ex;
+  msg.title=document.getElementById('btitle').value.trim();
+  msg.subtitle=MODE==='ride'&&routePts?routeKm(routePts).toFixed(1)+' km':(lastPlace.split(',').slice(1,3).join(',').trim());
+  msg.pitch=RESVALS[+document.getElementById('res').value];
+  if(MODE==='ride'&&routePts){ msg.route=routePts; msg.kind=rideKind; msg.holes=[];
+    msg.routeW=parseFloat(document.getElementById('rw').value); msg.routeH=parseFloat(document.getElementById('rh').value); }
+  bakedExag=ex; bakedRouteH=msg.routeH||1;
+  pbar(3);
   worker.postMessage(msg);
-};
+}
+document.getElementById('gen').onclick=regenerate;
 document.getElementById('edit').onclick=()=>{ editing=true;
   plan.style.display='block'; document.getElementById('zoomctl').style.display='flex';
   if(group){                       // board exists: split screen — edit left, live render right
@@ -599,15 +685,27 @@ document.getElementById('edit').onclick=()=>{ editing=true;
   fitPlan(); drawPlan(); };
 
 // ---------- publish ----------
+document.getElementById('dla').addEventListener('click',e=>{
+  if(dirty){ e.preventDefault(); pendingAction='download';
+    setStatus('<span class="spin"></span>baking your changes into the 3MF…','#9fd'); regenerate(); }
+});
 async function publish(){
   if(!group){setStatus('generate first','#ffb86b');return;}
+  if(dirty){ pendingAction='publish';
+    setStatus('<span class="spin"></span>baking your changes first…','#9fd'); regenerate(); return; }
   const name=prompt('Name this board:',(document.getElementById('h1').textContent||'').replace(/^\S+\s*/,'').trim()||'My board'); if(!name)return;
   const handle=prompt('Your name/handle (optional):','')||'';
   const tc=document.createElement('canvas'); tc.width=480;tc.height=360; tc.getContext('2d').drawImage(renderer.domElement,0,0,tc.width,tc.height);
   setStatus('<span class="spin"></span>publishing…','#9fd');
   const kind=MODE==='ride'?rideKind:'golf';
   const prms={exag:parseFloat(document.getElementById('ex').value)};
-  if(MODE==='ride'&&routePts){ prms.route=routePts; prms.kind=rideKind; prms.routeW=parseFloat(document.getElementById('rw').value); if(drawMode&&wayPts.length) prms.wpts=wayPts; }
+  if(MODE==='ride'&&routePts){ prms.route=routePts; prms.kind=rideKind;
+    prms.routeW=parseFloat(document.getElementById('rw').value); prms.routeH=parseFloat(document.getElementById('rh').value);
+    if(drawMode&&wayPts.length) prms.wpts=wayPts; }
+  if(MODE!=='ride') prms.holes=labels.filter(L=>!L.del).map(L=>({pts:L.pts,num:L.num,lx:L.lon,ly:L.lat}));
+  prms.title=document.getElementById('btitle').value.trim();
+  prms.subtitle=MODE==='ride'&&routePts?routeKm(routePts).toFixed(1)+' km':(lastPlace.split(',').slice(1,3).join(',').trim());
+  prms.pitch=RESVALS[+document.getElementById('res').value];
   const hid=hideList(); if(hid.length) prms.hide=hid;
   try{ const r=await (await fetch('/api/designs',{method:'POST',body:JSON.stringify({type:kind,name,place:lastPlace,bbox:cropLL,params:prms,handle,thumb:tc.toDataURL('image/png')})})).json();
     if(r.id){ if(lastPreview) await fetch('/api/designs/'+r.id+'/mesh',{method:'POST',body:lastPreview}); setStatus('✓ published — <a href="/">view in gallery</a>','#7CFC9A'); }
@@ -621,9 +719,39 @@ document.getElementById('ex').addEventListener('input',()=>{
   document.getElementById('exv').textContent=v.toFixed(1);
   if(group){ EX_UNI.value=v/bakedExag; if(Math.abs(v-bakedExag)>0.01) markDirty(); else document.getElementById('bakehint').style.display='none'; }
 });
+function swapRouteMesh(m){        // hot-swap just the ribbon mesh (live thickness preview)
+  if(!group) return;
+  const old=group.children.find(c=>c.name==='route');
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(m.verts),3));
+  geo.setIndex(new THREE.BufferAttribute(new Uint32Array(m.tris),1)); geo.computeVertexNormals();
+  const mat=new THREE.MeshStandardMaterial({color:old?old.material.color.clone():new THREE.Color(KCOLOR[rideKind]),roughness:0.92,side:THREE.DoubleSide});
+  patchMat(mat,m.routeH,ROUTE_H_UNI);
+  const mesh=new THREE.Mesh(geo,mat); mesh.name='route';
+  if(old){ group.remove(old); old.geometry.dispose(); old.material.dispose(); }
+  group.add(mesh); applyVisibility();
+}
+let rwT=null;
 document.getElementById('rw').addEventListener('input',()=>{
   document.getElementById('rwv').textContent=parseFloat(document.getElementById('rw').value).toFixed(1);
   markDirty();
+  clearTimeout(rwT); rwT=setTimeout(()=>{
+    if(group&&workerReady&&MODE==='ride'&&routePts)
+      worker.postMessage({type:'route',routeW:parseFloat(document.getElementById('rw').value),routeH:parseFloat(document.getElementById('rh').value)});
+  },250);
+});
+const RESVALS=[0.7,0.5,0.35,0.25], RESNAMES=['draft','standard','high','ultra'];
+document.getElementById('res').addEventListener('input',()=>{
+  const i=+document.getElementById('res').value;
+  document.getElementById('resv').textContent=RESNAMES[i]+' ('+RESVALS[i]+' mm)';
+  document.getElementById('reswarn').style.display=i>=2?'block':'none';
+  markDirty();
+});
+document.getElementById('btitle').addEventListener('input',markDirty);
+document.getElementById('rh').addEventListener('input',()=>{     // live: the ribbon lifts in place
+  const v=parseFloat(document.getElementById('rh').value);
+  document.getElementById('rhv').textContent=v.toFixed(1);
+  ROUTE_H_UNI.value=v; if(Math.abs(v-bakedRouteH)>0.01) markDirty();
 });
 
 // ---------- debounced autosearch (Nominatim policy: max 1 req/s) ----------
@@ -649,6 +777,9 @@ setStatus('<span class="spin"></span>loading engine…','#9fd');
   if(params.get('design')){ try{ const d=await (await fetch('/api/designs/'+params.get('design'))).json();
     lastPlace=d.place||''; if(d.params&&d.params.exag!=null){document.getElementById('ex').value=d.params.exag;document.getElementById('exv').textContent=(+d.params.exag).toFixed(1);}
     if(d.params&&d.params.routeW){document.getElementById('rw').value=d.params.routeW;document.getElementById('rwv').textContent=(+d.params.routeW).toFixed(1);}
+    if(d.params&&d.params.routeH){document.getElementById('rh').value=d.params.routeH;document.getElementById('rhv').textContent=(+d.params.routeH).toFixed(1);ROUTE_H_UNI.value=+d.params.routeH;}
+    if(d.params&&d.params.title!=null) document.getElementById('btitle').value=d.params.title;
+    if(d.params&&d.params.pitch){ const ri=RESVALS.indexOf(+d.params.pitch); if(ri>=0){document.getElementById('res').value=ri;document.getElementById('resv').textContent=RESNAMES[ri]+' ('+RESVALS[ri]+' mm)';} }
     if(d.params&&d.params.hide){ const hid=new Set(d.params.hide);
       FEATGROUPS.forEach(g=>{ const key=g.key==='marks'?'marks':g.objs[0];
         if(hid.has(key)||g.objs.some(o=>hid.has(o))) featOn[g.key]=false; });
@@ -658,7 +789,9 @@ setStatus('<span class="spin"></span>loading engine…','#9fd');
       document.getElementById('h1').textContent=KEMOJI[rideKind]+' '+d.name;
       document.getElementById('gpxinfo').textContent='✓ loaded route · '+routeKm(routePts).toFixed(1)+' km';
       enterEdit(d.bbox,true,true); }
-    else{ document.getElementById('h1').textContent='⛳ '+d.name; enterEdit(d.bbox,false,true); } }catch(e){ log('could not load design'); } }
+    else{ document.getElementById('h1').textContent='⛳ '+d.name;
+      if(d.params&&d.params.holes) pendingLabelHoles=d.params.holes;
+      enterEdit(d.bbox,false,true); } }catch(e){ log('could not load design'); } }
   else if(params.get('bbox')){ enterEdit(params.get('bbox').split(',').map(Number)); }
   else if(params.get('q')){ document.getElementById('q').value=params.get('q'); doSearch(); }
 })();

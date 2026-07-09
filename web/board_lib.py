@@ -3,7 +3,7 @@ and OSM golf polygons for a bbox, builds a colored relief board: terrain base +
 turf layers as proud colored decals -> per-object geometry (for WebGL) and a
 multicolor 3MF. Axis-aligned v1 (no rotation/detection/labels yet)."""
 import numpy as np, io, json, math, zipfile
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 ROUGH = (78, 120, 66)
 # (name, color, proud_mm, kind, width_m) — drawn in order; later overwrites on overlap.
@@ -107,7 +107,7 @@ def _mesh(mask, ztop, zbot, BH, pitch):
 
 def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
                holes_json="[]", font_bytes=None, pitch=None, route_json="[]", route_kind="bike",
-               hide_json="[]", route_w=2.4):
+               hide_json="[]", route_w=2.4, route_h=1.0, title="", subtitle=""):
     P = float(pitch) if pitch else PITCH       # mesh pitch (mm); coarse for fast previews
     raw = dem_in.to_py() if hasattr(dem_in, "to_py") else dem_in
     if not ncols:                       # raw is a float32 GeoTIFF (USGS 3DEP) -> decode
@@ -149,19 +149,33 @@ def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
         return ((lon - w) / (e - w) * nxb, (n - lat) / (n - s) * nyb)
     px_per_m = (255.0 / max(Wm, Hm)) / P            # board-grid pixels per ground metre
 
+    # supersampled rasterization: draw at SSx, majority-downsample -> anti-aliased masks
+    # (kills the stair-step jags on near-cardinal roads/paths)
+    SS = 3
+    def ss_px(lon, lat):
+        x, y = ll_px(lon, lat)
+        return (x * SS, y * SS)
+    def _down(im):
+        a = np.asarray(im, dtype=np.uint8).reshape(nyb, SS, nxb, SS)
+        return a.mean(axis=(1, 3)) >= 128
+
     # exclusive label grid (precedence by draw order; lines stroked over turf)
-    img = Image.new("L", (nxb, nyb), 0)
-    dr = ImageDraw.Draw(img)
+    lbl = np.zeros((nyb, nxb), np.uint8)
     for i, (name, color, proud, kind, width_m) in enumerate(LAYERS):
         if name in hide:
             continue
-        for way in feats.get(name, []):
-            pts = [ll_px(lo, la) for lo, la in way]
+        ways = feats.get(name, [])
+        if not ways:
+            continue
+        im = Image.new("L", (nxb * SS, nyb * SS), 0)
+        d = ImageDraw.Draw(im)
+        for way in ways:
+            pts = [ss_px(lo, la) for lo, la in way]
             if kind == "poly" and len(pts) >= 3:
-                dr.polygon(pts, fill=i + 1)
+                d.polygon(pts, fill=255)
             elif kind == "line" and len(pts) >= 2:
-                dr.line(pts, fill=i + 1, width=max(1, int(round(width_m * px_per_m))), joint="curve")
-    lbl = np.array(img)
+                d.line(pts, fill=255, width=max(1, int(round(width_m * px_per_m * SS))), joint="curve")
+        lbl[_down(im)] = i + 1
 
     objects = []
     Vb, Fb = _mesh(np.ones((nyb, nxb), bool), Zt, np.zeros_like(Zt), BH, P)
@@ -178,13 +192,13 @@ def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
         crr = np.clip(((np.arange(nyb) + 0.5) / nyb * (nrows - 1)).astype(int), 0, nrows - 1)
         ccc = np.clip(((np.arange(nxb) + 0.5) / nxb * (ncols - 1)).astype(int), 0, ncols - 1)
         cell = dem[np.ix_(crr, ccc)]
-        wimg = Image.new("L", (nxb, nyb), 0); wd = ImageDraw.Draw(wimg)
+        wimg = Image.new("L", (nxb * SS, nyb * SS), 0); wd = ImageDraw.Draw(wimg)
         for way in feats.get("water", []):
-            pts = [ll_px(lo, la) for lo, la in way]
+            pts = [ss_px(lo, la) for lo, la in way]
             if len(pts) >= 3:
-                wd.polygon(pts, fill=1)
+                wd.polygon(pts, fill=255)
         # water = below sea level (ocean, with real depth) + OSM lakes/ponds; blue, following Zt
-        water = ((np.array(wimg) > 0) | (cell < SEA_LEVEL)) & (lbl == 0)
+        water = (_down(wimg) | (cell < SEA_LEVEL)) & (lbl == 0)
         if water.any():
             V, F = _mesh(water, Zt + 0.15, Zt - EMBED, BH, P)
             objects.append(("water", WATER_COLOR, V, F))
@@ -193,21 +207,23 @@ def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
     # with a raised start-marker disc at the first track point
     route = json.loads(route_json) if route_json else []
     if len(route) >= 2:
-        rimg = Image.new("L", (nxb, nyb), 0)
+        rimg = Image.new("L", (nxb * SS, nyb * SS), 0)
         rd2 = ImageDraw.Draw(rimg)
-        rpts = [ll_px(lo, la) for lo, la in route]
-        rw = max(2, int(round(float(route_w) / P)))      # ribbon width in mm on the board
-        rd2.line(rpts, fill=1, width=rw, joint="curve")
-        rmask = np.array(rimg) > 0
+        rpts = [ss_px(lo, la) for lo, la in route]
+        rw = max(2, int(round(float(route_w) / P * SS)))  # ribbon width in mm on the board
+        rd2.line(rpts, fill=255, width=rw, joint="curve")
+        for p in (rpts[0], rpts[-1]):                     # round the ribbon ends
+            rd2.ellipse([p[0] - rw / 2, p[1] - rw / 2, p[0] + rw / 2, p[1] + rw / 2], fill=255)
+        rmask = _down(rimg)
         if rmask.any():
-            V, F = _mesh(rmask, Zt + 1.0, Zt - EMBED, BH, P)
+            V, F = _mesh(rmask, Zt + float(route_h), Zt - EMBED, BH, P)
             objects.append(("route", ROUTE_COLORS.get(route_kind, ROUTE_COLORS["bike"]), V, F))
-        simg = Image.new("L", (nxb, nyb), 0)
+        simg = Image.new("L", (nxb * SS, nyb * SS), 0)
         sd = ImageDraw.Draw(simg)
         sx, sy = rpts[0]
-        sr = 2.6 / P
-        sd.ellipse([sx - sr, sy - sr, sx + sr, sy + sr], fill=1)
-        smask = np.array(simg) > 0
+        sr = 2.6 / P * SS
+        sd.ellipse([sx - sr, sy - sr, sx + sr, sy + sr], fill=255)
+        smask = _down(simg)
         if smask.any():
             V, F = _mesh(smask, Zt + 1.4, Zt - EMBED, BH, P)
             objects.append(("start", (245, 245, 245), V, F))
@@ -215,13 +231,25 @@ def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
     # hole outlines (corridor boundary, kept on rough) + raised hole numbers
     holes = json.loads(holes_json) if (holes_json and "marks" not in hide) else []
     if holes:
-        corr = Image.new("L", (nxb, nyb), 0); cd = ImageDraw.Draw(corr)
-        cw = max(1, int(round(60.0 * px_per_m)))            # ~60 m playing corridor
+        corr = Image.new("L", (nxb * SS, nyb * SS), 0); cd = ImageDraw.Draw(corr)
+        cw = max(2, int(round(60.0 * px_per_m * SS)))       # ~60 m playing corridor
         for h in holes:
-            pts = [ll_px(lo, la) for lo, la in h["pts"]]
+            pts = [ss_px(lo, la) for lo, la in h["pts"]]
             if len(pts) >= 2:
-                cd.line(pts, fill=1, width=cw, joint="curve")
-        corr = np.array(corr) > 0
+                cd.line(pts, fill=255, width=cw, joint="curve")
+                for p in (pts[0], pts[-1]):                 # round caps: no flat cut at tee/pin
+                    cd.ellipse([p[0] - cw / 2, p[1] - cw / 2, p[0] + cw / 2, p[1] + cw / 2], fill=255)
+        # wrap the turf shapes so the ring flows around tees/greens/bunkers, never through them
+        for name in ("fairway", "tee", "green", "bunker"):
+            for way in feats.get(name, []):
+                pts = [ss_px(lo, la) for lo, la in way]
+                if len(pts) >= 3:
+                    cd.polygon(pts, fill=255)
+        # gaussian blur + threshold: organic corner rounding, scaled to the corridor width
+        corr = corr.filter(ImageFilter.GaussianBlur(cw / 5.0))
+        corr = _down(corr)
+        pad = max(1, int(round(0.8 / P)))
+        corr = ~_erode(~corr, pad)          # dilate outward so the ring clears the turf edges
         outline = (corr & ~_erode(corr, max(1, int(round(1.4 / P))))) & (lbl == 0)
         if outline.any():
             V, F = _mesh(outline, Zt + 0.9, Zt - EMBED, BH, P)
@@ -230,7 +258,7 @@ def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
         raw_font = font_bytes.to_py() if hasattr(font_bytes, "to_py") else font_bytes
         if raw_font is not None:
             fpx = max(8, int(round(9.0 / P)))
-            font = ImageFont.truetype(io.BytesIO(bytes(raw_font)), fpx)
+            font = ImageFont.truetype(io.BytesIO(bytes(raw_font)), fpx * SS)
             def place(pts_px):                       # prefer hole midpoint, but keep off water
                 for t in (0.5, 0.45, 0.55, 0.4, 0.6, 0.35, 0.65, 0.3, 0.7):
                     x, y = _point_at(pts_px, t); xi, yi = int(x), int(y)
@@ -247,13 +275,45 @@ def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
                 else:
                     mx, my = place([ll_px(lo, la) for lo, la in h["pts"]]); labels.append([num, mx, my, False])
             _declutter(labels, fpx * 1.5, nxb, nyb)        # push apart if too close
-            nimg = Image.new("L", (nxb, nyb), 0); nd = ImageDraw.Draw(nimg)
+            nimg = Image.new("L", (nxb * SS, nyb * SS), 0); nd = ImageDraw.Draw(nimg)
             for L in labels:
-                nd.text((L[1], L[2]), L[0], font=font, fill=1, anchor="mm")
-            nmask = np.array(nimg) > 0
+                nd.text((L[1] * SS, L[2] * SS), L[0], font=font, fill=255, anchor="mm")
+            nmask = _down(nimg)
             if nmask.any():
                 V, F = _mesh(nmask, Zt + 1.1, Zt - EMBED, BH, P)
                 objects.append(("numbers", (245, 245, 245), V, F))
+
+    # title plaque: flat rounded plate in the bottom-left corner, raised name + subtitle
+    raw_tf = font_bytes.to_py() if hasattr(font_bytes, "to_py") else font_bytes
+    if title and raw_tf is not None and "plaque" not in hide:
+        t1, t2 = str(title)[:40], str(subtitle)[:48]
+        f1 = ImageFont.truetype(io.BytesIO(bytes(raw_tf)), max(8, int(round(6.5 / P * SS))))
+        f2 = ImageFont.truetype(io.BytesIO(bytes(raw_tf)), max(6, int(round(3.6 / P * SS)))) if t2 else None
+        b1 = f1.getbbox(t1); w1, h1 = b1[2] - b1[0], b1[3] - b1[1]
+        w2 = h2 = 0
+        if f2:
+            b2 = f2.getbbox(t2); w2, h2 = b2[2] - b2[0], b2[3] - b2[1]
+        padx = int(round(3.0 / P * SS)); pady = int(round(2.2 / P * SS))
+        gap = int(round(1.4 / P * SS)) if t2 else 0
+        pw = min(max(w1, w2) + padx * 2, nxb * SS - 2)
+        ph = h1 + h2 + gap + pady * 2
+        inset = int(round(5.0 / P * SS))
+        x0 = inset; y1p = nyb * SS - inset; y0 = y1p - ph
+        pimg = Image.new("L", (nxb * SS, nyb * SS), 0); pd = ImageDraw.Draw(pimg)
+        pd.rounded_rectangle([x0, y0, x0 + pw, y1p], radius=int(round(2.5 / P * SS)), fill=255)
+        pmask = _down(pimg)
+        timg = Image.new("L", (nxb * SS, nyb * SS), 0); td = ImageDraw.Draw(timg)
+        td.text((x0 + padx - b1[0], y0 + pady - b1[1]), t1, font=f1, fill=255)
+        if f2:
+            td.text((x0 + padx - b2[0], y0 + pady + h1 + gap - b2[1]), t2, font=f2, fill=255)
+        tmask = _down(timg) & pmask
+        if pmask.any():
+            ztop = float(Zt[:-1, :-1][pmask].max()) + 0.8   # flat, just proud of local terrain
+            V, F = _mesh(pmask, np.full_like(Zt, ztop), Zt - EMBED, BH, P)
+            objects.append(("plaque", (24, 44, 32), V, F))
+            if tmask.any():
+                V, F = _mesh(tmask, np.full_like(Zt, ztop + 0.8), np.full_like(Zt, ztop - 0.4), BH, P)
+                objects.append(("title", (245, 245, 245), V, F))
 
     tmf = _make_3mf(objects)
     return {
@@ -262,6 +322,52 @@ def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
                     for nm, col, V, F in objects],
         "tmf": tmf, "board": [round(BW, 1), round(BH, 1)],
     }
+
+
+def route_layer(dem_in, nrows, ncols, bbox, exag=4.0, base_mm=8.0,
+                route_json="[]", route_w=2.4, route_h=1.0, pitch=None):
+    """Remesh ONLY the route ribbon on the same terrain grid as the last board —
+    cheap enough to run live while the thickness slider drags (display only;
+    downloads re-bake the full board). Mirrors golf_board's terrain math."""
+    P = float(pitch) if pitch else PITCH
+    raw = dem_in.to_py() if hasattr(dem_in, "to_py") else dem_in
+    if not ncols:
+        dem = np.asarray(Image.open(io.BytesIO(bytes(raw))), dtype=np.float64)
+        nrows, ncols = dem.shape
+    else:
+        dem = np.asarray(raw, dtype=np.float64).reshape(nrows, ncols)
+    dem = np.where(dem < -1e10, np.nan, dem)
+    if np.isnan(dem).any():
+        dem = np.where(np.isnan(dem), np.nanmin(dem), dem)
+    w, s, e, n = bbox
+    clat = (s + n) / 2
+    Wm = (e - w) * 111320 * math.cos(math.radians(clat))
+    Hm = (n - s) * 111320
+    BW, BH = (255.0, 255.0 * Hm / Wm) if Wm >= Hm else (255.0 * Wm / Hm, 255.0)
+    ZPM = (255.0 / max(Wm, Hm)) * exag
+    nyb, nxb = int(BH / P), int(BW / P)
+    rr = np.clip((np.arange(nyb + 1) / nyb * (nrows - 1)).astype(int), 0, nrows - 1)
+    cc = np.clip((np.arange(nxb + 1) / nxb * (ncols - 1)).astype(int), 0, ncols - 1)
+    samp = dem[np.ix_(rr, cc)]
+    land = samp >= 0.0
+    datum = float(samp[land].min()) if land.any() else float(samp.min())
+    recess = min(base_mm - 2.0, 6.0)
+    land_z = base_mm + np.maximum(samp - datum, 0.0) * ZPM
+    ocean_z = base_mm - np.minimum(np.maximum(-samp, 0.0) * ZPM, recess)
+    Zt = np.where(samp >= 0.0, land_z, ocean_z).astype(np.float64)
+    route = json.loads(route_json)
+    SS = 3                                    # match golf_board's supersampled ribbon
+    rimg = Image.new("L", (nxb * SS, nyb * SS), 0)
+    rd = ImageDraw.Draw(rimg)
+    rpts = [((lo - w) / (e - w) * nxb * SS, (n - la) / (n - s) * nyb * SS) for lo, la in route]
+    rw = max(2, int(round(float(route_w) / P * SS)))
+    rd.line(rpts, fill=255, width=rw, joint="curve")
+    for p in (rpts[0], rpts[-1]):
+        rd.ellipse([p[0] - rw / 2, p[1] - rw / 2, p[0] + rw / 2, p[1] + rw / 2], fill=255)
+    a = np.asarray(rimg, dtype=np.uint8).reshape(nyb, SS, nxb, SS)
+    rmask = a.mean(axis=(1, 3)) >= 128
+    V, F = _mesh(rmask, Zt + float(route_h), Zt - EMBED, BH, P)
+    return {"verts": V.tobytes(), "tris": F.tobytes(), "ntri": int(len(F))}
 
 
 def _xml_mesh(V, F):

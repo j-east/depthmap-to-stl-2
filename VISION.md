@@ -42,3 +42,32 @@ are shared. Town maps and skylines are the most natural next expansions.
 Free 3MF download + paid printed boards (Shopify checkout/fulfillment). Domain:
 **terrainmaps.land**. Names are user‑set with disclaimers (trademark posture);
 imagery uses public‑domain NAIP. See the project notes for the legal posture.
+
+## Sales funnel (drafted 2026-07)
+
+Principle: **the free tier is the marketing.** Unrestricted in-browser generation +
+free 3MF download costs us ~nothing (all compute is client-side) and every board
+someone prints at home or shares in the gallery is an ad. The exit ramp is quality,
+not access:
+
+1. **Create (free, unlimited)** — search/draw → live 3D → download 3MF. No account,
+   no watermark, no limits. Publish-to-gallery is the viral loop (every shared board
+   links back to "Order this print").
+2. **The ramp** — an "Order this board" CTA on /play (after generate), /view, and the
+   gallery hero. The pitch is what home printers can't do:
+   - **Resin / multi-material prints** — museum-grade detail, true color layers,
+     finishes most people have no access to.
+   - **Human review** — we check label placement, crop, water/coast artifacts, and
+     hand-tune before printing (turn the manual review into a stated feature).
+   - **Print-grade resolution** — we re-generate server/offline at finer pitch than
+     the browser build, plus post-processing.
+   - Framing/mounting options later.
+3. **Checkout** — Shopify product per size/material tier; the design id rides along
+   as a line-item property so fulfillment pulls the exact recipe. Price anchored to
+   materials + review time (e.g. $79/$149/$249 tiers by size/tech).
+4. **Follow-through** — order status page; photo of the finished board before ship
+   (also great gallery/social content, with permission).
+
+Funnel metrics to wire early: generates → publishes → order-clicks → checkouts.
+The "resolution" slider in the free tool intentionally tops out below what the paid
+print uses — free hi-fi exists (slow, in-browser), paid is *finer + reviewed + resin*.
