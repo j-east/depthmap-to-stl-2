@@ -55,14 +55,23 @@ function classify(t){
   return null;
 }
 async function fetchFeatures(w,s,e,n){
-  const ql=`[out:json][timeout:25];(way["golf"](${s},${w},${n},${e});way["highway"](${s},${w},${n},${e});way["railway"](${s},${w},${n},${e});way["natural"="water"](${s},${w},${n},${e}););out geom;`;
-  const j=await overpass(ql); const f={}, holes=[];
-  for(const el of (j.elements||[])){ if(!el.geometry) continue;
+  const bb=`(${s},${w},${n},${e})`;
+  const ql=`[out:json][timeout:25];(way["golf"]${bb};way["highway"]${bb};way["railway"]${bb};way["natural"="water"]${bb};way["leisure"="golf_course"]${bb};relation["leisure"="golf_course"]${bb};);out geom;`;
+  const j=await overpass(ql); const f={}, holes=[], courses=[];
+  for(const el of (j.elements||[])){
     const t=el.tags||{};
-    if(t.golf==='hole'){ holes.push({pts:el.geometry.map(p=>[p.lon,p.lat]), num:(t.ref||t.name||'').toString().replace(/[^0-9]/g,'')}); continue; }
+    if(t.leisure==='golf_course'){        // course boundary polygons: group holes by course
+      if(el.geometry) courses.push({name:t.name||'unnamed course', poly:el.geometry.map(p=>[p.lon,p.lat])});
+      else if(el.members) el.members.forEach(m=>{ if(m.type==='way'&&m.geometry&&m.role!=='inner')
+        courses.push({name:t.name||'unnamed course', poly:m.geometry.map(p=>[p.lon,p.lat])}); });
+      continue;
+    }
+    if(!el.geometry) continue;
+    if(t.golf==='hole'){ holes.push({pts:el.geometry.map(p=>[p.lon,p.lat]), num:(t.ref||t.name||'').toString().replace(/[^0-9]/g,''),
+      name:(t.name||t.description||'').toString()}); continue; }
     const L=classify(t); if(!L) continue;
     (f[L]=f[L]||[]).push(el.geometry.map(p=>[p.lon,p.lat]));}
-  return {feats:f, holes};
+  return {feats:f, holes, courses};
 }
 
 // pack render objects -> compact binary (uint32 header len | header JSON | verts+tris blobs)
@@ -95,7 +104,7 @@ onmessage = async (ev)=>{
   if(m.type==='features'){           // for the pre-render edit step (plan + holes), no build
     await ready;
     try{ const [w,s,e,n]=m.bbox; const ff=await fetchFeatures(w,s,e,n);
-      postMessage({type:'features', feats:ff.feats, holes:ff.holes, bbox:m.bbox}); }
+      postMessage({type:'features', feats:ff.feats, holes:ff.holes, courses:ff.courses, bbox:m.bbox}); }
     catch(err){ postMessage({type:'error', msg:err.message}); }
     return;
   }

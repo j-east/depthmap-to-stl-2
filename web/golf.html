@@ -74,6 +74,10 @@
   </div>
 
   <div id="editpanel" style="display:none">
+    <div id="coursebox" style="display:none">
+      <label>courses on this land — include:</label>
+      <div id="courselist"></div>
+    </div>
     <button class="go" id="gen">✓ Generate board</button>
     <div class="tip" id="tipGolf">Drag the <b>crop box</b> edges/corners to frame the board. Drag <b>hole numbers</b> to move them; click the ✕ to delete a stray one (e.g. a practice course).</div>
     <div class="tip" id="tipRide" style="display:none"><b>Click the map</b> to drop waypoints — the route snaps to roads. <b>Drag the route</b> to reshape it (Google-Maps style), drag waypoints to move them, ✕ to remove. Drag or two-finger scroll to pan, pinch to zoom. Frame with the <b>crop box</b> (drag its edges).</div>
@@ -97,9 +101,9 @@
     </div>
     <label>vertical exaggeration: <span id="exv">4.0</span>×</label>
     <input type="range" id="ex" min="1" max="8" step="0.5" value="4" style="width:100%">
-    <label>resolution: <span id="resv">standard</span></label>
-    <input type="range" id="res" min="0" max="3" step="1" value="1" style="width:100%">
-    <div class="tip" id="reswarn" style="display:none;color:#ffb86b">hi-fi meshes take several minutes to build and make big downloads</div>
+    <label>resolution: <span id="resv">high (0.35 mm)</span></label>
+    <input type="range" id="res" min="0" max="3" step="1" value="2" style="width:100%">
+    <div class="tip" id="reswarn" style="display:none;color:#ffb86b">ultra meshes take several minutes to build and make big downloads</div>
     <div class="tip" id="bakehint" style="display:none;color:#9fd">live preview — bakes in automatically when you download or publish</div>
   </div>
   <label class="tog"><input type="checkbox" id="spin" checked onchange="controls.autoRotate=this.checked"><span class="sw"></span> auto-rotate</label>
@@ -452,6 +456,7 @@ function enterEdit(guess,isRide,exact){
   document.getElementById('zoomctl').style.right='16px';
   if(renderer){ renderer.domElement.style.display='none'; renderer.domElement.style.width='100%'; resize3D(1); }
   feats={}; labels=[];
+  document.getElementById('coursebox').style.display='none'; document.getElementById('courselist').innerHTML='';
   console.log('[tm] enterEdit', {VP,cropLL,isRide:!!isRide,workerReady});
   if(MODE==='ride'){   // tiles are the basemap; no Overpass needed for display
     fitPlan(); drawPlan();
@@ -461,24 +466,59 @@ function enterEdit(guess,isRide,exact){
     workerReady ? worker.postMessage({type:'features',bbox:VP}) : (pendingFeatures=VP);
   }
 }
+function pip(pt,poly){                 // point-in-polygon (ray cast)
+  let inside=false;
+  for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+    const xi=poly[i][0],yi=poly[i][1],xj=poly[j][0],yj=poly[j][1];
+    if(((yi>pt[1])!==(yj>pt[1]))&&(pt[0]<(xj-xi)*(pt[1]-yi)/(yj-yi)+xi)) inside=true;
+  }
+  return inside;
+}
+function buildCourseChecks(){
+  const box=document.getElementById('coursebox'), list=document.getElementById('courselist');
+  const groups=[...new Set(labels.map(L=>L.course))];
+  if(groups.length<2){ box.style.display='none'; list.innerHTML=''; return; }
+  box.style.display='block'; list.innerHTML='';
+  groups.forEach(gname=>{
+    const mine=labels.filter(L=>L.course===gname);
+    const l=document.createElement('label'); l.className='feat';
+    const c=document.createElement('input'); c.type='checkbox'; c.checked=mine.some(L=>!L.del);
+    c.onchange=()=>{ labels.forEach(L=>{ if(L.course===gname) L.del=!c.checked; }); drawPlan(); };
+    l.appendChild(c); l.appendChild(document.createTextNode(' '+(gname||'other holes')+' ('+mine.length+')'));
+    list.appendChild(l);
+  });
+}
 function onFeatures(m){
   feats=m.feats||{}; if(m.bbox) featBB=m.bbox;
   // only build hole labels on first load — refetches (pan/zoom) must not clobber user edits
   if(MODE!=='ride'&&!labels.length){
     if(pendingLabelHoles){          // remixing a published design: restore its edited labels
-      labels=pendingLabelHoles.map(h=>({num:h.num,pts:h.pts,lon:h.lx,lat:h.ly,del:false}));
+      labels=pendingLabelHoles.map(h=>({num:h.num,pts:h.pts,lon:h.lx,lat:h.ly,del:false,course:''}));
       pendingLabelHoles=null;
     }else{
-      // default to holes inside THIS course's bbox — neighbours' holes stay out
       const all=(m.holes||[]).filter(h=>h.num);
+      const courses=m.courses||[];
       const gb=guessBB?expand(guessBB,1.15):null;
-      const inBB=h=>{ if(!gb) return true; const ll=midLL(h.pts);
-        return ll[0]>=gb[0]&&ll[0]<=gb[2]&&ll[1]>=gb[1]&&ll[1]<=gb[3]; };
-      let keep=all.filter(inBB); if(!keep.length) keep=all;    // over-tight guess: keep everything
-      labels=keep.map(h=>{const ll=midLL(h.pts);return {num:h.num,pts:h.pts,lon:ll[0],lat:ll[1],del:false};});
+      const inBB=ll=>!gb||(ll[0]>=gb[0]&&ll[0]<=gb[2]&&ll[1]>=gb[1]&&ll[1]<=gb[3]);
+      labels=all.map(h=>{ const ll=midLL(h.pts);
+        const c=courses.find(cc=>pip(ll,cc.poly));
+        // hole names often prefix the course ("Stadium 1") — splits courses sharing one polygon
+        const pre=(h.name||'').replace(/\s*\d+\s*$/,'').replace(/\bhole\b/ig,'').replace(/\s+/g,' ').trim();
+        const cname=c?c.name:'';
+        const course=pre&&cname?cname+' · '+pre:(pre||cname);
+        return {num:h.num,pts:h.pts,lon:ll[0],lat:ll[1],del:false,course,inbb:inBB(ll)}; });
+      // default: a course group starts checked if any of its holes sit in the searched bbox
+      const groups=[...new Set(labels.map(L=>L.course))];
+      groups.forEach(gname=>{
+        const mine=labels.filter(L=>L.course===gname);
+        const on=mine.some(L=>L.inbb);
+        mine.forEach(L=>L.del=!on);
+      });
+      if(!labels.some(L=>!L.del)) labels.forEach(L=>L.del=false);   // over-tight guess: keep all
     }
+    buildCourseChecks();
   }
-  setStatus(MODE==='ride'?(drawMode||routePts?'adjust, then Generate':'click the map to drop waypoints'):labels.length+' holes · drag to adjust, then Generate','#9a9ab0');
+  setStatus(MODE==='ride'?(drawMode||routePts?'adjust, then Generate':'click the map to drop waypoints'):labels.filter(L=>!L.del).length+' holes · drag to adjust, then Generate','#9a9ab0');
   fitPlan(); drawPlan();
 }
 function drawPolys(list,fill){ if(!list)return; px.fillStyle=fill; list.forEach(w=>{ if(w.length<3)return; px.beginPath(); w.forEach((p,i)=>{const q=ll2px(p[0],p[1]); i?px.lineTo(q[0],q[1]):px.moveTo(q[0],q[1]);}); px.closePath(); px.fill(); }); }
@@ -744,7 +784,7 @@ const RESVALS=[0.7,0.5,0.35,0.25], RESNAMES=['draft','standard','high','ultra'];
 document.getElementById('res').addEventListener('input',()=>{
   const i=+document.getElementById('res').value;
   document.getElementById('resv').textContent=RESNAMES[i]+' ('+RESVALS[i]+' mm)';
-  document.getElementById('reswarn').style.display=i>=2?'block':'none';
+  document.getElementById('reswarn').style.display=i>=3?'block':'none';
   markDirty();
 });
 document.getElementById('btitle').addEventListener('input',markDirty);

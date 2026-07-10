@@ -186,7 +186,8 @@ def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
             V, F = _mesh(m, Zt + proud, Zt - EMBED, BH, P)
             objects.append((name, color, V, F))
 
-    # water: OSM water polygons + ocean (DEM at/below sea level), flat blue, where no turf
+    # water: ocean (DEM at/below sea level) keeps real bathymetry; inland water is
+    # FLAT per body — water finds its level, terrain bumps must not bleed through
     water = np.zeros((nyb, nxb), bool)
     if "water" not in hide:
         crr = np.clip(((np.arange(nyb) + 0.5) / nyb * (nrows - 1)).astype(int), 0, nrows - 1)
@@ -197,10 +198,36 @@ def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
             pts = [ss_px(lo, la) for lo, la in way]
             if len(pts) >= 3:
                 wd.polygon(pts, fill=255)
-        # water = below sea level (ocean, with real depth) + OSM lakes/ponds; blue, following Zt
-        water = (_down(wimg) | (cell < SEA_LEVEL)) & (lbl == 0)
-        if water.any():
-            V, F = _mesh(water, Zt + 0.15, Zt - EMBED, BH, P)
+        ocean = (cell < SEA_LEVEL) & (lbl == 0)
+        lakes = _down(wimg) & ~ocean & (lbl == 0)
+        water = ocean | lakes
+        if ocean.any():
+            V, F = _mesh(ocean, Zt + 0.15, Zt - EMBED, BH, P)
+            objects.append(("water", WATER_COLOR, V, F))
+        if lakes.any():
+            # flatten each body to its own minimum: propagate the min height through
+            # connected water cells until stable (numpy flood; no scipy needed)
+            INF = 1e18
+            zw = np.where(lakes, Zt[:-1, :-1], INF)
+            for _ in range(4000):
+                zn = zw.copy()
+                zn[1:, :] = np.minimum(zn[1:, :], zw[:-1, :])
+                zn[:-1, :] = np.minimum(zn[:-1, :], zw[1:, :])
+                zn[:, 1:] = np.minimum(zn[:, 1:], zw[:, :-1])
+                zn[:, :-1] = np.minimum(zn[:, :-1], zw[:, 1:])
+                zn = np.where(lakes, zn, INF)
+                if np.array_equal(zn, zw):
+                    break
+                zw = zn
+            lvl = np.where(lakes, zw + 0.15, INF)
+            Ztop = np.full_like(Zt, INF)
+            for dr in (0, 1):                       # cell levels -> corner heights
+                for dc in (0, 1):
+                    sub = Ztop[dr:dr + nyb, dc:dc + nxb]
+                    np.minimum(sub, lvl, out=sub)
+            Ztop = np.where(Ztop > 1e17, Zt + 0.15, Ztop)
+            Zbot = np.minimum(Zt - EMBED, Ztop - 0.8)   # always a solid slab under the surface
+            V, F = _mesh(lakes, Ztop, Zbot, BH, P)
             objects.append(("water", WATER_COLOR, V, F))
 
     # ride route: bold ribbon following the terrain, proud of everything else,
@@ -370,35 +397,51 @@ def route_layer(dem_in, nrows, ncols, bbox, exag=4.0, base_mm=8.0,
     return {"verts": V.tobytes(), "tris": F.tobytes(), "ntri": int(len(F))}
 
 
-def _xml_mesh(V, F):
-    """Vectorized 3MF vertex/triangle serialization (np.char, C-level — fast at high tri counts)."""
+def _xml_vert_chunks(V, ch=250_000):
+    """Vectorized vertex XML in bounded chunks (np.char is fast but allocates ~60B/row
+    intermediates — chunking keeps peak memory flat for multi-million-tri hi-fi builds)."""
     ca = np.char.add
-    verts = ca(ca(ca('<vertex x="', np.char.mod('%.3f', V[:, 0])),
-                  ca('" y="', np.char.mod('%.3f', V[:, 1]))),
-               ca(ca('" z="', np.char.mod('%.3f', V[:, 2])), '"/>'))
-    tris = ca(ca(ca('<triangle v1="', np.char.mod('%d', F[:, 0])),
-                 ca('" v2="', np.char.mod('%d', F[:, 1]))),
-              ca(ca('" v3="', np.char.mod('%d', F[:, 2])), '"/>'))
-    return "".join(verts.tolist()), "".join(tris.tolist())
+    for i in range(0, len(V), ch):
+        v = V[i:i + ch]
+        s = ca(ca(ca('<vertex x="', np.char.mod('%.3f', v[:, 0])),
+                  ca('" y="', np.char.mod('%.3f', v[:, 1]))),
+               ca(ca('" z="', np.char.mod('%.3f', v[:, 2])), '"/>'))
+        yield "".join(s.tolist())
+
+
+def _xml_tri_chunks(F, ch=250_000):
+    ca = np.char.add
+    for i in range(0, len(F), ch):
+        t = F[i:i + ch]
+        s = ca(ca(ca('<triangle v1="', np.char.mod('%d', t[:, 0])),
+                  ca('" v2="', np.char.mod('%d', t[:, 1]))),
+               ca(ca('" v3="', np.char.mod('%d', t[:, 2])), '"/>'))
+        yield "".join(s.tolist())
 
 
 def _make_3mf(objects):
-    parts, items = [], []
-    for k, (name, color, V, F) in enumerate(objects):
-        oid = k + 2
-        mat = ('<basematerials id="%d"><base name="%s" displaycolor="#%02X%02X%02X"/></basematerials>'
-               % (oid * 10, name, color[0], color[1], color[2]))
-        vs, ts = _xml_mesh(V, F)
-        parts.append(mat + '<object id="%d" name="%s" type="model" pid="%d" pindex="0"><mesh>'
-                     '<vertices>%s</vertices><triangles>%s</triangles></mesh></object>'
-                     % (oid, name, oid * 10, vs, ts))
-        items.append('<item objectid="%d"/>' % oid)
-    model = ('<?xml version="1.0" encoding="UTF-8"?>'
-             '<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">'
-             '<resources>' + "".join(parts) + '</resources><build>' + "".join(items) + '</build></model>')
+    """Stream the model XML directly into the zip member — the full document is never
+    held in memory (it can exceed the WASM heap at ultra resolution)."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml", '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>')
         z.writestr("_rels/.rels", '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel-1" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>')
-        z.writestr("3D/3dmodel.model", model)
+        with z.open("3D/3dmodel.model", "w") as f:
+            f.write(b'<?xml version="1.0" encoding="UTF-8"?>'
+                    b'<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">'
+                    b'<resources>')
+            for k, (name, color, V, F) in enumerate(objects):
+                oid = k + 2
+                f.write(('<basematerials id="%d"><base name="%s" displaycolor="#%02X%02X%02X"/></basematerials>'
+                         '<object id="%d" name="%s" type="model" pid="%d" pindex="0"><mesh><vertices>'
+                         % (oid * 10, name, color[0], color[1], color[2], oid, name, oid * 10)).encode())
+                for c in _xml_vert_chunks(V):
+                    f.write(c.encode())
+                f.write(b'</vertices><triangles>')
+                for c in _xml_tri_chunks(F):
+                    f.write(c.encode())
+                f.write(b'</triangles></mesh></object>')
+            f.write(('</resources><build>'
+                     + "".join('<item objectid="%d"/>' % (k + 2) for k in range(len(objects)))
+                     + '</build></model>').encode())
     return buf.getvalue()
