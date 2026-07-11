@@ -108,7 +108,7 @@
     </div>
     <button class="btn" type="submit">Search</button>
   </form>
-  <a class="btn create" href="/play">+ Create</a>
+  <a class="btn create" href="/designer">+ Create</a>
 </header>
 
 <main>
@@ -154,7 +154,7 @@
 
 <footer>
   <div><b>TerrainMaps</b> — boards are generated entirely in your browser from USGS / NOAA elevation + OpenStreetMap data.</div>
-  <div>Made for printing · <a href="/play" style="color:#8fd0f0">create a board →</a></div>
+  <div>Made for printing · <a href="/designer" style="color:#8fd0f0">create a board →</a></div>
 </footer>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -177,7 +177,7 @@ async function load(){
 }
 function renderGrid(designs){
   const g=document.getElementById('grid');
-  if(!designs.length){ g.innerHTML='<div class="empty" style="grid-column:1/-1">No boards yet — be the first to <a href="/play">create one</a>.</div>'; return; }
+  if(!designs.length){ g.innerHTML='<div class="empty" style="grid-column:1/-1">No boards yet — be the first to <a href="/designer">create one</a>.</div>'; return; }
   g.innerHTML='';
   designs.forEach((d,i)=>{
     const c=document.createElement('div'); c.className='card'; c.style.animationDelay=(i*45)+'ms';
@@ -196,8 +196,8 @@ function renderHero(d){
     ? `<h2>${esc(d.name)}</h2><div class="sub">${esc(shortPlace(d.place))} <span class="vc">▲ ${d.votes}</span></div>`
     : `<h2>The Country Club</h2><div class="sub">Brookline, MA <span class="vc">sample</span></div>`;
   document.getElementById('heroCta').innerHTML = d
-    ? `<a class="btn ghost" href="/play?design=${d.id}">✎ Remix</a> <a class="btn" href="/view?design=${d.id}">Open board</a>`
-    : `<a class="btn" href="/play">Create your own →</a>`;
+    ? `<a class="btn ghost" href="/designer?design=${d.id}">✎ Remix</a> <a class="btn" href="/view?design=${d.id}">Open board</a>`
+    : `<a class="btn" href="/designer">Create your own →</a>`;
   document.getElementById('heroThumb').style.backgroundImage = (d&&d.thumb)?`url(/thumb-design/${d.id})`:'';
   loadHeroMesh(d ? '/mesh-design/'+d.id : '/featured-demo.mesh');
 }
@@ -213,7 +213,7 @@ async function doSearch(ev){ ev.preventDefault(); const term=document.getElement
   renderGrid(res); const g=document.getElementById('grid');
   const create=document.createElement('div'); create.className='card new'; create.style.cssText+='display:flex;align-items:center;justify-content:center;min-height:180px';
   create.innerHTML=`<div style="text-align:center;color:#aab2c6"><div style="font-size:26px;color:#7fb069">+</div>Create “${esc(term)}”</div>`;
-  create.onclick=()=>location='/play?q='+encodeURIComponent(term); g.prepend(create);
+  create.onclick=()=>location='/designer?q='+encodeURIComponent(term); g.prepend(create);
 }
 
 // ---- precomputed-mesh hero (Three.js only; no Pyodide, no OSM) ----

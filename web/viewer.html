@@ -78,7 +78,7 @@ async function load(){
     document.getElementById('place').textContent=design.place||'';
     document.getElementById('votes').textContent=design.votes;
     if(VOTED.has(ID)) document.getElementById('vote').classList.add('voted');
-    document.getElementById('remix').onclick=()=>location='/play?design='+ID;
+    document.getElementById('remix').onclick=()=>location='/designer?design='+ID;
     document.getElementById('order').onclick=()=>st('ordering/checkout coming soon','#ffb86b');
     document.getElementById('dl').onclick=download;
     if(design.mesh){ showMesh(unpackMesh(await (await fetch('/mesh-design/'+ID)).arrayBuffer())); }   // instant

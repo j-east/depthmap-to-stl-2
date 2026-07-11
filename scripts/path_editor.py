@@ -725,7 +725,7 @@ async function load(){
 }
 async function openP(n){ S.textContent='opening '+n+'…';
   await fetch('/setactive',{method:'POST',body:JSON.stringify({name:n})}); location='/editor'; }
-function playClient(n,bbox){ location='/play?name='+encodeURIComponent(n)+'&bbox='+bbox.join(','); }
+function playClient(n,bbox){ location='/designer?name='+encodeURIComponent(n)+'&bbox='+bbox.join(','); }
 async function build(n){ S.textContent='building '+n+'… (1-2 min)';
   await fetch('/region',{method:'POST',body:JSON.stringify({name:n})});
   const o=await (await fetch('/build',{method:'POST',body:'{}'})).json();
@@ -953,8 +953,15 @@ class H(BaseHTTPRequestHandler):
             self._send(200, b"ok", "text/plain")
             return
         # public client-side generator (all compute in the browser; no auth, no server work)
+        # old /play links (bookmarks, published shares) redirect to /designer
+        if self.path.split("?")[0] in ("/play", "/golf"):
+            q = self.path.split("?", 1)
+            self.send_response(301)
+            self.send_header("Location", "/designer" + ("?" + q[1] if len(q) > 1 else ""))
+            self.end_headers()
+            return
         WEB = {"/": ("gallery.html", "text/html"),
-               "/play": ("golf.html", "text/html"), "/golf": ("golf.html", "text/html"),
+               "/designer": ("golf.html", "text/html"),
                "/view": ("viewer.html", "text/html"),
                "/proto": ("proto.html", "text/html"),
                "/board_lib.py": ("board_lib.py", "text/plain; charset=utf-8"),
