@@ -174,7 +174,9 @@ def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
             if kind == "poly" and len(pts) >= 3:
                 d.polygon(pts, fill=255)
             elif kind == "line" and len(pts) >= 2:
-                d.line(pts, fill=255, width=max(1, int(round(width_m * px_per_m * SS))), joint="curve")
+                # floor at just over one output cell — thinner lines don't survive the
+                # majority downsample (large ride boards: a 7 m road is sub-cell)
+                d.line(pts, fill=255, width=max(SS + 1, int(round(width_m * px_per_m * SS))), joint="curve")
         lbl[_down(im)] = i + 1
 
     objects = []

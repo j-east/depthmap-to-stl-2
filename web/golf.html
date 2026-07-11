@@ -315,9 +315,24 @@ function applyVisibility(){ if(!group)return;
   const off=new Set(FEATGROUPS.filter(g=>!featOn[g.key]).flatMap(g=>g.objs));
   group.children.forEach(m=>{ if(m.name) m.visible=!off.has(m.name); }); }
 let dirty=false, pendingAction=null;   // 'download' | 'publish' — resumes after an auto-rebuild
-function markDirty(){ dirty=true; if(group){ document.getElementById('bakehint').style.display='block';
-  if(!editing) document.getElementById('regen').style.display='block'; } }
-function clearDirty(){ dirty=false; document.getElementById('bakehint').style.display='none';
+let bakedParams=null, pendingBaked=null;   // settings the current board was built with
+function currentParams(){ return JSON.stringify({
+  exag:parseFloat(document.getElementById('ex').value),
+  pitch:RESVALS[+document.getElementById('res').value],
+  rw:MODE==='ride'?parseFloat(document.getElementById('rw').value):0,
+  rh:MODE==='ride'?parseFloat(document.getElementById('rh').value):0,
+  title:document.getElementById('btitle').value.trim(),
+  pos:plaquePos, hide:hideList()}); }
+// dirty = settings actually differ from the built board (touch-and-revert stays clean)
+function markDirty(){
+  dirty=bakedParams!==null&&currentParams()!==bakedParams;
+  const show=dirty&&!!group;
+  document.getElementById('bakehint').style.display=show?'block':'none';
+  document.getElementById('regen').style.display=(show&&!editing)?'block':'none';
+  if(!dirty){ const r=document.getElementById('regen'); r.disabled=false; r.textContent='↻ Regenerate board'; }
+}
+function clearDirty(){ bakedParams=pendingBaked||currentParams(); pendingBaked=null; dirty=false;
+  document.getElementById('bakehint').style.display='none';
   const r=document.getElementById('regen'); r.style.display='none'; r.disabled=false; r.textContent='↻ Regenerate board'; }
 function buildFeatChecks(){
   const box=document.getElementById('featchecks'); box.innerHTML='';
@@ -723,7 +738,7 @@ function regenerate(){
   msg.plaquePos=plaquePos;
   if(MODE==='ride'&&routePts){ msg.route=routePts; msg.kind=rideKind; msg.holes=[];
     msg.routeW=parseFloat(document.getElementById('rw').value); msg.routeH=parseFloat(document.getElementById('rh').value); }
-  bakedExag=ex; bakedRouteH=msg.routeH||1;
+  bakedExag=ex; bakedRouteH=msg.routeH||1; pendingBaked=currentParams();
   pbar(3);
   worker.postMessage(msg);
 }
@@ -756,7 +771,7 @@ document.getElementById('cancelEdit').onclick=()=>{
   renderer.domElement.style.display='block'; renderer.domElement.style.width='100%'; resize3D(1);
   document.getElementById('editpanel').style.display='none'; document.getElementById('donepanel').style.display='block';
   document.getElementById('gen').textContent='✓ Generate board';
-  if(dirty) document.getElementById('regen').style.display='block';
+  markDirty();
   setStatus('','#9a9ab0'); };
 
 // ---------- publish ----------
@@ -793,7 +808,8 @@ document.getElementById('pub').onclick=publish;
 document.getElementById('ex').addEventListener('input',()=>{
   const v=parseFloat(document.getElementById('ex').value);
   document.getElementById('exv').textContent=v.toFixed(1);
-  if(group){ EX_UNI.value=v/bakedExag; if(Math.abs(v-bakedExag)>0.01) markDirty(); else document.getElementById('bakehint').style.display='none'; }
+  if(group) EX_UNI.value=v/bakedExag;
+  markDirty();
 });
 function swapRouteMesh(m){        // hot-swap just the ribbon mesh (live thickness preview)
   if(!group) return;
@@ -831,7 +847,7 @@ function setPlaquePos(p){ plaquePos=p;
 document.getElementById('rh').addEventListener('input',()=>{     // live: the ribbon lifts in place
   const v=parseFloat(document.getElementById('rh').value);
   document.getElementById('rhv').textContent=v.toFixed(1);
-  ROUTE_H_UNI.value=v; if(Math.abs(v-bakedRouteH)>0.01) markDirty();
+  ROUTE_H_UNI.value=v; markDirty();
 });
 
 // ---------- debounced autosearch (Nominatim policy: max 1 req/s) ----------
