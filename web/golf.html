@@ -775,7 +775,59 @@ document.getElementById('cancelEdit').onclick=()=>{
   setStatus('','#9a9ab0'); };
 
 // ---------- publish ----------
+// ---- free-account gate for downloads (name + email -> /api/signup) ----
+function getAccount(){ try{return JSON.parse(localStorage.getItem('tmAccount')||'null');}catch(e){return null;} }
+let acctThen=null, gisMounted=false;
+async function mountGoogle(){          // Sign in with Google, when GOOGLE_CLIENT_ID is configured
+  if(gisMounted) return;
+  try{
+    const cfg=await (await fetch('/api/config')).json();
+    if(!cfg.googleClientId) return;
+    if(!(window.google&&google.accounts)) await new Promise((res,rej)=>{ const s=document.createElement('script');
+      s.src='https://accounts.google.com/gsi/client'; s.onload=res; s.onerror=rej; document.head.appendChild(s); });
+    google.accounts.id.initialize({client_id:cfg.googleClientId, callback:async resp=>{
+      try{ const r=await (await fetch('/api/signup',{method:'POST',body:JSON.stringify({credential:resp.credential})})).json();
+        if(!r.id) throw new Error(r.error||'google sign-in failed');
+        localStorage.setItem('tmAccount',JSON.stringify({id:r.id,email:r.email||'',handle:r.handle||''}));
+        document.getElementById('acctOv').style.display='none'; if(acctThen)acctThen();
+      }catch(e){ document.getElementById('acctErr').textContent=e.message; } }});
+    google.accounts.id.renderButton(document.getElementById('gbtn'),{theme:'filled_black',size:'large',width:280});
+    document.getElementById('gdiv').style.display='block';
+    gisMounted=true;
+  }catch(e){}
+}
+function askAccount(then){
+  if(getAccount()){then();return;}
+  acctThen=then;
+  let ov=document.getElementById('acctOv');
+  if(!ov){ ov=document.createElement('div'); ov.id='acctOv';
+    ov.style.cssText='position:fixed;inset:0;background:#000a;display:flex;align-items:center;justify-content:center;z-index:50';
+    ov.innerHTML=`<div style="background:#161b26;border:1px solid #2a3142;border-radius:14px;padding:22px;width:330px;font-size:14px">
+      <h3 style="margin:0 0 6px">Create a free account</h3>
+      <div style="color:#8a94ad;font-size:13px;margin-bottom:12px">It's free — sign in to download and publish.</div>
+      <div id="gbtn" style="display:flex;justify-content:center"></div>
+      <div id="gdiv" style="display:none;text-align:center;color:#5d6579;font-size:12px;margin:8px 0">— or with email —</div>
+      <input id="acctName" placeholder="name / handle" style="width:100%;margin-bottom:8px">
+      <input id="acctEmail" placeholder="email" type="email" style="width:100%;margin-bottom:12px">
+      <div style="display:flex;gap:8px">
+        <button id="acctGo" style="flex:1;background:#1f7a3a">Create account</button>
+        <button id="acctNo" style="background:#2a3142;color:#cdd">Cancel</button>
+      </div>
+      <div id="acctErr" style="color:#ff8a8a;font-size:12px;margin-top:8px;min-height:15px"></div></div>`;
+    document.body.appendChild(ov); }
+  ov.style.display='flex'; mountGoogle();
+  document.getElementById('acctNo').onclick=()=>ov.style.display='none';
+  document.getElementById('acctGo').onclick=async()=>{
+    const handle=document.getElementById('acctName').value.trim(), email=document.getElementById('acctEmail').value.trim();
+    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ document.getElementById('acctErr').textContent='enter a valid email'; return; }
+    try{ const r=await (await fetch('/api/signup',{method:'POST',body:JSON.stringify({email,handle})})).json();
+      if(!r.id) throw new Error(r.error||'signup failed');
+      localStorage.setItem('tmAccount',JSON.stringify({id:r.id,email,handle:r.handle||handle}));
+      ov.style.display='none'; if(acctThen)acctThen();
+    }catch(e){ document.getElementById('acctErr').textContent=e.message; } };
+}
 document.getElementById('dla').addEventListener('click',e=>{
+  if(!getAccount()){ e.preventDefault(); askAccount(()=>document.getElementById('dla').click()); return; }
   if(dirty){ e.preventDefault(); pendingAction='download';
     setStatus('<span class="spin"></span>baking your changes into the 3MF…','#9fd'); regenerate(); }
 });
@@ -784,7 +836,7 @@ async function publish(){
   if(dirty){ pendingAction='publish';
     setStatus('<span class="spin"></span>baking your changes first…','#9fd'); regenerate(); return; }
   const name=prompt('Name this board:',(document.getElementById('h1').textContent||'').replace(/^\S+\s*/,'').trim()||'My board'); if(!name)return;
-  const handle=prompt('Your name/handle (optional):','')||'';
+  const handle=prompt('Your name/handle (optional):',(getAccount()||{}).handle||'')||'';
   const tc=document.createElement('canvas'); tc.width=480;tc.height=360; tc.getContext('2d').drawImage(renderer.domElement,0,0,tc.width,tc.height);
   setStatus('<span class="spin"></span>publishing…','#9fd');
   const kind=MODE==='ride'?rideKind:'golf';
@@ -802,7 +854,7 @@ async function publish(){
     if(r.id){ if(lastPreview) await fetch('/api/designs/'+r.id+'/mesh',{method:'POST',body:lastPreview}); setStatus('✓ published — <a href="/">view in gallery</a>','#7CFC9A'); }
     else setStatus('publish failed','#ff8a8a'); }catch(e){ setStatus('publish failed: '+e.message,'#ff8a8a'); }
 }
-document.getElementById('pub').onclick=publish;
+document.getElementById('pub').onclick=()=>askAccount(publish);
 
 // ---------- sliders: exaggeration is live on the GPU; thickness bakes on regenerate ----------
 document.getElementById('ex').addEventListener('input',()=>{

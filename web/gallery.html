@@ -229,21 +229,18 @@ function initHero(){
   renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2)); renderer.setSize(el.clientWidth,el.clientHeight);
   scene=new THREE.Scene();
   camera=new THREE.PerspectiveCamera(42,el.clientWidth/el.clientHeight,0.1,5000); camera.up.set(0,0,1); camera.position.set(118,-224,172);
-  controls=new THREE.OrbitControls(camera,cv); controls.enableDamping=true; controls.enablePan=false; controls.enabled=false;
-  cv.addEventListener('pointerdown',()=>{ if(cineOn){ cineOn=false; controls.enabled=true;
-    document.getElementById('heroLoading').textContent='drag to orbit · scroll to zoom'; } });
   scene.add(new THREE.HemisphereLight(0xffffff,0x223,0.85)); const d=new THREE.DirectionalLight(0xffffff,0.7); d.position.set(-1,-1,2); scene.add(d);
   addEventListener('resize',()=>{renderer.setSize(el.clientWidth,el.clientHeight);camera.aspect=el.clientWidth/el.clientHeight;camera.updateProjectionMatrix();});
   (function loop(){
     requestAnimationFrame(loop);
-    if(cineOn&&group){
+    if(group){
       const S=SHOTS[cineShot], t=Math.min(1,(performance.now()-shotStart)/S.dur);
       const e=t*t*(3-2*t);                          // smoothstep easing
       const r=S.r0+(S.r1-S.r0)*e, ph=S.ph0+(S.ph1-S.ph0)*e, th=thBase+S.dth*e;
       camera.position.set(r*Math.sin(ph)*Math.cos(th), r*Math.sin(ph)*Math.sin(th), r*Math.cos(ph));
       camera.lookAt(0,0,0);
       if(t>=1&&!swapping) advanceHero();
-    } else if(controls.enabled) controls.update();
+    }
     renderer.render(scene,camera);
   })();
 }
@@ -253,7 +250,10 @@ function heroInfo(d,i,n){
     ? `<h2>${esc(d.name)}</h2><div class="sub">${esc(shortPlace(d.place))} <span class="vc">▲ ${d.votes}</span></div>`
     : `<h2>The Country Club</h2><div class="sub">Brookline, MA <span class="vc">sample</span></div>`;
   document.getElementById('heroCta').innerHTML=d
-    ? `<a class="btn ghost" href="/designer?design=${d.id}">✎ Remix</a> <a class="btn" href="/view?design=${d.id}">Open board</a>`
+    ? `<a class="btn ghost" href="/designer?design=${d.id}">✎ Remix</a>
+       <a class="btn ghost" href="/view?design=${d.id}&dl=1">⬇ Download 3MF</a>
+       <a class="btn ghost" href="/order?design=${d.id}">🖨 Order prints</a>
+       <a class="btn" href="/view?design=${d.id}">Open board</a>`
     : `<a class="btn" href="/designer">Create your own →</a>`;
   document.getElementById('heroThumb').style.backgroundImage=(d&&d.thumb)?`url(/thumb-design/${d.id})`:'';
 }
@@ -276,7 +276,7 @@ async function showHeroBoard(i,first){
     shotStart=performance.now();
     cv.classList.add('on');
     document.getElementById('heroThumb').style.opacity='0';
-    document.getElementById('heroLoading').textContent=cineOn?'drag to explore':'drag to orbit · scroll to zoom';
+    document.getElementById('heroLoading').style.display='none';
     if(n>1) heroFetch(heroUrl(heroBoards[(i+1)%n]));          // preload the next board
   }catch(e){ document.getElementById('heroLoading').style.display='none'; /* keep thumbnail */ }
 }

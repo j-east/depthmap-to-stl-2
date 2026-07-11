@@ -35,6 +35,20 @@ if USE_PG:
 def _q(sql):
     return sql.replace("?", "%s") if USE_PG else sql      # placeholder dialect
 
+# simple in-memory per-IP rate limiting for the public write endpoints
+_rl, _rl_lock = {}, threading.Lock()
+def _rate_ok(handler, key, limit, window=3600):
+    ip = (handler.headers.get("X-Forwarded-For") or handler.client_address[0]).split(",")[0].strip()
+    now = time.time()
+    with _rl_lock:
+        q = _rl.setdefault((key, ip), [])
+        while q and q[0] < now - window:
+            q.pop(0)
+        if len(q) >= limit:
+            return False
+        q.append(now)
+    return True
+
 @contextlib.contextmanager
 def _db():
     if USE_PG:
@@ -78,6 +92,8 @@ def _init_designs():
             params TEXT, handle TEXT, votes INTEGER DEFAULT 0, created DOUBLE PRECISION)""")
         cur.execute("""CREATE TABLE IF NOT EXISTS votes(
             design_id TEXT, voter TEXT, PRIMARY KEY(design_id, voter))""")
+        cur.execute("""CREATE TABLE IF NOT EXISTS accounts(
+            id TEXT PRIMARY KEY, email TEXT UNIQUE, handle TEXT, created DOUBLE PRECISION)""")
 
 def _design_row(r):
     return {"id": r["id"], "type": r["type"], "name": r["name"], "place": r["place"],
@@ -953,6 +969,9 @@ class H(BaseHTTPRequestHandler):
             self._send(200, b"ok", "text/plain")
             return
         # public client-side generator (all compute in the browser; no auth, no server work)
+        if self.path == "/api/config":       # public client config (google sign-in etc.)
+            self._send(200, json.dumps({"googleClientId": os.environ.get("GOOGLE_CLIENT_ID", "")}).encode())
+            return
         # old /play links (bookmarks, published shares) redirect to /designer
         if self.path.split("?")[0] in ("/play", "/golf"):
             q = self.path.split("?", 1)
@@ -963,6 +982,7 @@ class H(BaseHTTPRequestHandler):
         WEB = {"/": ("gallery.html", "text/html"),
                "/designer": ("golf.html", "text/html"),
                "/view": ("viewer.html", "text/html"),
+               "/order": ("order.html", "text/html"),
                "/proto": ("proto.html", "text/html"),
                "/board_lib.py": ("board_lib.py", "text/plain; charset=utf-8"),
                "/worker.js": ("worker.js", "text/javascript"),
@@ -1094,9 +1114,49 @@ class H(BaseHTTPRequestHandler):
             self._send(404, "{}")
 
     def do_POST(self):
+        if self.path == "/api/signup":                # free account (download/publish gate)
+            if not _rate_ok(self, "signup", 12):
+                self._send(429, b'{"error":"too many attempts - try again later"}'); return
+            n = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(n)) if n else {}
+            cred = body.get("credential")
+            if cred:                                   # google sign-in: verify the ID token
+                import urllib.request, urllib.parse as _up
+                try:
+                    with urllib.request.urlopen(
+                            "https://oauth2.googleapis.com/tokeninfo?id_token=" + _up.quote(cred),
+                            timeout=10) as resp:
+                        info = json.loads(resp.read())
+                    if info.get("aud") != os.environ.get("GOOGLE_CLIENT_ID", ""):
+                        raise ValueError("audience mismatch")
+                    if str(info.get("email_verified")).lower() != "true":
+                        raise ValueError("email not verified")
+                    email = info["email"].strip().lower()[:120]
+                    handle = (info.get("name") or email.split("@")[0]).strip()[:60]
+                except Exception:
+                    self._send(400, b'{"error":"google sign-in failed"}'); return
+            else:
+                email = (body.get("email") or "").strip().lower()[:120]
+                handle = (body.get("handle") or "").strip()[:60]
+                if "@" not in email or "." not in email.split("@")[-1]:
+                    self._send(400, b'{"error":"invalid email"}'); return
+            with _db() as cur:
+                cur.execute(_q("SELECT id, handle FROM accounts WHERE email=?"), (email,))
+                r = cur.fetchone()
+                if r:
+                    self._send(200, json.dumps({"id": r["id"], "handle": r["handle"] or handle,
+                                                "email": email}).encode()); return
+                aid = secrets.token_hex(8)
+                cur.execute(_q("INSERT INTO accounts(id,email,handle,created) VALUES(?,?,?,?)"),
+                            (aid, email, handle, time.time()))
+            self._send(200, json.dumps({"id": aid, "handle": handle, "email": email}).encode()); return
         if self.path.startswith("/api/designs"):     # public gallery API
             n = int(self.headers.get("Content-Length") or 0)
             mm = re.match(r"^/api/designs/([A-Za-z0-9_-]+)/mesh$", urlparse(self.path).path)
+            is_vote = urlparse(self.path).path.endswith("/vote")
+            key, limit = ("vote", 120) if is_vote else (("meshup", 30) if mm else ("publish", 20))
+            if not _rate_ok(self, key, limit):
+                self._send(429, b'{"error":"rate limited - try again later"}'); return
             if mm:                                    # raw precomputed-geometry upload
                 with open(os.path.join(MESH_DIR, mm.group(1) + ".bin"), "wb") as f:
                     f.write(self.rfile.read(n))
