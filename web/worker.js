@@ -11,16 +11,41 @@ async function init(){
 }
 const ready = init().catch(e=>{ postMessage({type:'error',msg:'engine failed to load: '+e.message}); throw e; });
 
-// ---- NOAA NCEI topobathy DEM (float TIFF, CORS-open): land + real ocean depth ----
+// ---- elevation: USGS 3DEP for land (uniform 10 m in CONUS — the NOAA mosaic has
+// resolution seams inland) + NOAA topobathy for real ocean depth; merged in Python ----
+const DEM_3DEP='https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/exportImage';
+const DEM_NOAA='https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_all/ImageServer/exportImage';
 async function fetchDEM(w,s,e,n){
   const clat=(s+n)/2*Math.PI/180, Wm=(e-w)*111320*Math.cos(clat), Hm=(n-s)*111320, LONG=1600;
   let W,H; if(Wm>=Hm){W=LONG;H=Math.max(2,Math.round(LONG*Hm/Wm));}else{H=LONG;W=Math.max(2,Math.round(LONG*Wm/Hm));}
-  const url=`https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_all/ImageServer/exportImage`
-    +`?bbox=${w},${s},${e},${n}&bboxSR=4326&imageSR=4326&size=${W},${H}`
+  const q=`?bbox=${w},${s},${e},${n}&bboxSR=4326&imageSR=4326&size=${W},${H}`
     +`&format=tiff&pixelType=F32&interpolation=RSP_BilinearInterpolation&adjustAspectRatio=false&f=image`;
-  const r=await fetch(url); if(!r.ok) throw new Error('NOAA DEM HTTP '+r.status);
-  return {bytes:new Uint8Array(await r.arrayBuffer()), W, H};
+  const get=async base=>{ const r=await fetch(base+q); if(!r.ok) throw new Error('DEM HTTP '+r.status);
+    return new Uint8Array(await r.arrayBuffer()); };
+  const [dep,noaa]=await Promise.allSettled([get(DEM_3DEP),get(DEM_NOAA)]);
+  if(dep.status==='rejected'&&noaa.status==='rejected') throw new Error('elevation services unavailable — try again');
+  return {dep:dep.status==='fulfilled'?dep.value:null, noaa:noaa.status==='fulfilled'?noaa.value:null, W, H};
 }
+const MERGE_PY=`
+import numpy as np, io
+from PIL import Image
+def _ld(b):
+    if b is None: return None
+    a = np.asarray(Image.open(io.BytesIO(bytes(b))), dtype=np.float64)
+    return np.where(a < -1e10, np.nan, a)
+_d = _ld(dep_bytes); _b = _ld(noaa_bytes)
+if _d is None:
+    dem_merged = _b
+elif _b is None:
+    dem_merged = _d
+else:
+    if _b.shape != _d.shape:
+        _b = np.asarray(Image.fromarray(_b.astype(np.float32)).resize((_d.shape[1], _d.shape[0]), Image.BILINEAR), dtype=np.float64)
+    # ocean from NOAA bathymetry; land from 3DEP; NOAA fills where 3DEP has no coverage
+    dem_merged = np.where(_b < 0.3, _b, np.where(np.isnan(_d), _b, _d))
+if np.isnan(dem_merged).all(): raise ValueError('no elevation data for this area')
+dem_merged = np.where(np.isnan(dem_merged), np.nanmin(dem_merged), dem_merged)
+`;
 // ---- OSM Overpass (mirrors, fall through on timeout) ----
 const OVERPASS=['https://overpass-api.de/api/interpreter',
                 'https://overpass.kumi.systems/api/interpreter',
@@ -94,7 +119,7 @@ onmessage = async (ev)=>{
     if(!lastGen) return;
     try{
       const [w,s,e,n]=lastGen.bbox;
-      const res=pyodide.runPython(`route_layer(dem_bytes,0,0,[${w},${s},${e},${n}],${lastGen.exag},8.0,route_json,${+m.routeW||2.4},${+m.routeH||1})`);
+      const res=pyodide.runPython(`route_layer(dem_merged,dem_merged.shape[0],dem_merged.shape[1],[${w},${s},${e},${n}],${lastGen.exag},8.0,route_json,${+m.routeW||2.4},${+m.routeH||1})`);
       const out=res.toJs(); res.destroy();
       const verts=out.get('verts').buffer, tris=out.get('tris').buffer;
       postMessage({type:'route', verts, tris, routeH:+m.routeH||1}, [verts,tris]);
@@ -122,7 +147,9 @@ onmessage = async (ev)=>{
     const counts=Object.fromEntries(Object.entries(ff.feats).map(([k,v])=>[k,v.length]));
     postMessage({type:'progress',msg:`DEM ${dem.W}x${dem.H}, ${holes.length} holes, ${JSON.stringify(counts)} (${((Date.now()-t0)/1000).toFixed(1)}s)`,pct:30});
     const t1=Date.now();
-    pyodide.globals.set('dem_bytes',dem.bytes);
+    pyodide.globals.set('dep_bytes',dem.dep);
+    pyodide.globals.set('noaa_bytes',dem.noaa);
+    pyodide.runPython(MERGE_PY);          // -> dem_merged (seam-free land + real bathymetry)
     pyodide.globals.set('feats_json',JSON.stringify(ff.feats));
     pyodide.globals.set('holes_json',JSON.stringify(holes));
     pyodide.globals.set('font_bytes',FONT);
@@ -131,7 +158,7 @@ onmessage = async (ev)=>{
     pyodide.globals.set('title_s',(m.title||'').toString());
     pyodide.globals.set('subtitle_s',(m.subtitle||'').toString());
     const finePitch=+m.pitch?+m.pitch:'None';
-    const call=p=>`golf_board(dem_bytes,0,0,[${w},${s},${e},${n}],feats_json,${m.exag},8.0,holes_json,font_bytes,${p},route_json,'${kind}',hide_json,${routeW},${routeH},title_s,subtitle_s)`;
+    const call=p=>`golf_board(dem_merged,dem_merged.shape[0],dem_merged.shape[1],[${w},${s},${e},${n}],feats_json,${m.exag},8.0,holes_json,font_bytes,${p},route_json,'${kind}',hide_json,${routeW},${routeH},title_s,subtitle_s,'${m.plaquePos||'bl'}')`;
     postMessage({type:'progress',msg:'meshing the board…',pct:35});
     const res=pyodide.runPython(call(finePitch));
     const out=res.toJs(); res.destroy();

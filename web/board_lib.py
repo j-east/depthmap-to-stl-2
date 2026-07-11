@@ -107,7 +107,7 @@ def _mesh(mask, ztop, zbot, BH, pitch):
 
 def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
                holes_json="[]", font_bytes=None, pitch=None, route_json="[]", route_kind="bike",
-               hide_json="[]", route_w=2.4, route_h=1.0, title="", subtitle=""):
+               hide_json="[]", route_w=2.4, route_h=1.0, title="", subtitle="", plaque_pos="bl"):
     P = float(pitch) if pitch else PITCH       # mesh pitch (mm); coarse for fast previews
     raw = dem_in.to_py() if hasattr(dem_in, "to_py") else dem_in
     if not ncols:                       # raw is a float32 GeoTIFF (USGS 3DEP) -> decode
@@ -325,7 +325,9 @@ def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
         pw = min(max(w1, w2) + padx * 2, nxb * SS - 2)
         ph = h1 + h2 + gap + pady * 2
         inset = int(round(5.0 / P * SS))
-        x0 = inset; y1p = nyb * SS - inset; y0 = y1p - ph
+        x0 = inset if "l" in plaque_pos else nxb * SS - inset - pw
+        y0 = inset if "t" in plaque_pos else nyb * SS - inset - ph
+        y1p = y0 + ph
         pimg = Image.new("L", (nxb * SS, nyb * SS), 0); pd = ImageDraw.Draw(pimg)
         pd.rounded_rectangle([x0, y0, x0 + pw, y1p], radius=int(round(2.5 / P * SS)), fill=255)
         pmask = _down(pimg)
