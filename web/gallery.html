@@ -172,8 +172,7 @@ const shortPlace=p=>(p||'').split(',').slice(1,4).map(s=>s.trim()).filter(x=>x&&
 async function load(){
   let designs=[]; try{ designs=(await api(`/api/designs?sort=${sort}&type=${type}`)).designs; }catch(e){}
   renderGrid(designs);
-  const feat=designs.find(d=>d.mesh)||null;     // featured = top board that has a precomputed mesh
-  renderHero(feat);
+  renderHero(designs.filter(d=>d.mesh).slice(0,3));   // top boards with precomputed meshes
 }
 function renderGrid(designs){
   const g=document.getElementById('grid');
@@ -190,16 +189,9 @@ function renderGrid(designs){
     g.appendChild(c);
   });
 }
-function renderHero(d){
-  document.getElementById('eyebrow').textContent = d?'✦ Featured board':'✦ Sample board';
-  document.getElementById('heroInfo').innerHTML = d
-    ? `<h2>${esc(d.name)}</h2><div class="sub">${esc(shortPlace(d.place))} <span class="vc">▲ ${d.votes}</span></div>`
-    : `<h2>The Country Club</h2><div class="sub">Brookline, MA <span class="vc">sample</span></div>`;
-  document.getElementById('heroCta').innerHTML = d
-    ? `<a class="btn ghost" href="/designer?design=${d.id}">✎ Remix</a> <a class="btn" href="/view?design=${d.id}">Open board</a>`
-    : `<a class="btn" href="/designer">Create your own →</a>`;
-  document.getElementById('heroThumb').style.backgroundImage = (d&&d.thumb)?`url(/thumb-design/${d.id})`:'';
-  loadHeroMesh(d ? '/mesh-design/'+d.id : '/featured-demo.mesh');
+function renderHero(list){
+  heroBoards=list.length?list:[null];               // null = the bundled sample board
+  heroIdx=0; showHeroBoard(0,true);
 }
 async function vote(id,el){
   if(VOTED.has(id)) return;
@@ -223,32 +215,76 @@ function unpackMesh(buf){
   let off=4+hlen; return header.objects.map(o=>{ const verts=buf.slice(off,off+o.v); off+=o.v; const tris=buf.slice(off,off+o.t); off+=o.t; return {color:o.color,verts,tris}; });
 }
 let renderer,scene,camera,controls,group;
+// ---- cinematic hero: choreographed camera shots, cycling through the top boards ----
+let heroBoards=[null], heroIdx=0, bufCache={}, swapping=false;
+let cineOn=true, cineShot=0, shotStart=0, thBase=-1.1;
+const SHOTS=[                                       // r = distance (mm), ph = polar angle (rad from +z)
+  {dur:12000, r0:340, r1:295, ph0:1.02, ph1:0.92, dth:0.85},   // wide slow orbit
+  {dur:13000, r0:195, r1:300, ph0:1.24, ph1:1.00, dth:1.15},   // low close sweep, pulling back
+  {dur:12000, r0:430, r1:245, ph0:0.70, ph1:1.00, dth:0.90},   // high approach, pushing in
+];
 function initHero(){
   const cv=document.getElementById('heroCanvas'), el=cv.parentElement;
   renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:true});
   renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2)); renderer.setSize(el.clientWidth,el.clientHeight);
   scene=new THREE.Scene();
   camera=new THREE.PerspectiveCamera(42,el.clientWidth/el.clientHeight,0.1,5000); camera.up.set(0,0,1); camera.position.set(118,-224,172);
-  controls=new THREE.OrbitControls(camera,cv); controls.enableDamping=true; controls.autoRotate=true; controls.autoRotateSpeed=0.7; controls.enablePan=false;
+  controls=new THREE.OrbitControls(camera,cv); controls.enableDamping=true; controls.enablePan=false; controls.enabled=false;
+  cv.addEventListener('pointerdown',()=>{ if(cineOn){ cineOn=false; controls.enabled=true;
+    document.getElementById('heroLoading').textContent='drag to orbit · scroll to zoom'; } });
   scene.add(new THREE.HemisphereLight(0xffffff,0x223,0.85)); const d=new THREE.DirectionalLight(0xffffff,0.7); d.position.set(-1,-1,2); scene.add(d);
   addEventListener('resize',()=>{renderer.setSize(el.clientWidth,el.clientHeight);camera.aspect=el.clientWidth/el.clientHeight;camera.updateProjectionMatrix();});
-  (function loop(){requestAnimationFrame(loop);if(controls)controls.update();renderer.render(scene,camera);})();
+  (function loop(){
+    requestAnimationFrame(loop);
+    if(cineOn&&group){
+      const S=SHOTS[cineShot], t=Math.min(1,(performance.now()-shotStart)/S.dur);
+      const e=t*t*(3-2*t);                          // smoothstep easing
+      const r=S.r0+(S.r1-S.r0)*e, ph=S.ph0+(S.ph1-S.ph0)*e, th=thBase+S.dth*e;
+      camera.position.set(r*Math.sin(ph)*Math.cos(th), r*Math.sin(ph)*Math.sin(th), r*Math.cos(ph));
+      camera.lookAt(0,0,0);
+      if(t>=1&&!swapping) advanceHero();
+    } else if(controls.enabled) controls.update();
+    renderer.render(scene,camera);
+  })();
 }
-async function loadHeroMesh(url){
-  document.getElementById('heroLoading').style.display='block';
+function heroInfo(d,i,n){
+  document.getElementById('eyebrow').textContent=(d?'✦ Featured':'✦ Sample board')+(n>1?'  ·  '+(i+1)+' / '+n:'');
+  document.getElementById('heroInfo').innerHTML=d
+    ? `<h2>${esc(d.name)}</h2><div class="sub">${esc(shortPlace(d.place))} <span class="vc">▲ ${d.votes}</span></div>`
+    : `<h2>The Country Club</h2><div class="sub">Brookline, MA <span class="vc">sample</span></div>`;
+  document.getElementById('heroCta').innerHTML=d
+    ? `<a class="btn ghost" href="/designer?design=${d.id}">✎ Remix</a> <a class="btn" href="/view?design=${d.id}">Open board</a>`
+    : `<a class="btn" href="/designer">Create your own →</a>`;
+  document.getElementById('heroThumb').style.backgroundImage=(d&&d.thumb)?`url(/thumb-design/${d.id})`:'';
+}
+const heroUrl=d=>d?'/mesh-design/'+d.id:'/featured-demo.mesh';
+async function heroFetch(url){ if(!bufCache[url]) bufCache[url]=(await fetch(url)).arrayBuffer(); return bufCache[url]; }
+async function showHeroBoard(i,first){
+  const n=heroBoards.length, d=heroBoards[i%n], cv=document.getElementById('heroCanvas');
   try{
-    const buf=await (await fetch(url)).arrayBuffer();
+    const buf=await heroFetch(heroUrl(d));
+    if(!first){ cv.classList.remove('on'); await new Promise(r=>setTimeout(r,650)); }
     const g=new THREE.Group();
     unpackMesh(buf).forEach(o=>{ const geo=new THREE.BufferGeometry();
       geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(o.verts),3));
       geo.setIndex(new THREE.BufferAttribute(new Uint32Array(o.tris),1)); geo.computeVertexNormals();
       g.add(new THREE.Mesh(geo,new THREE.MeshStandardMaterial({color:new THREE.Color(o.color),roughness:0.92,side:THREE.DoubleSide})));});
     const box=new THREE.Box3().setFromObject(g),c=box.getCenter(new THREE.Vector3()); g.position.set(-c.x,-c.y,-c.z);
-    if(group)scene.remove(group); group=g; scene.add(g);
-    document.getElementById('heroCanvas').classList.add('on');
+    if(group){ scene.remove(group); group.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material)o.material.dispose(); }); }
+    group=g; scene.add(g);
+    heroInfo(d,i%n,n);
+    shotStart=performance.now();
+    cv.classList.add('on');
     document.getElementById('heroThumb').style.opacity='0';
-    document.getElementById('heroLoading').textContent='drag to orbit · scroll to zoom';
+    document.getElementById('heroLoading').textContent=cineOn?'drag to explore':'drag to orbit · scroll to zoom';
+    if(n>1) heroFetch(heroUrl(heroBoards[(i+1)%n]));          // preload the next board
   }catch(e){ document.getElementById('heroLoading').style.display='none'; /* keep thumbnail */ }
+}
+function advanceHero(){
+  swapping=true; cineShot=(cineShot+1)%SHOTS.length; thBase+=1.9;
+  if(heroBoards.length>1){ heroIdx=(heroIdx+1)%heroBoards.length;
+    showHeroBoard(heroIdx).finally(()=>{swapping=false;}); }
+  else { shotStart=performance.now(); swapping=false; }       // one board: just change the shot
 }
 initHero(); load();
 </script></body></html>
