@@ -344,22 +344,28 @@ def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
             m2 = int(round(2.0 / P))
             xs = np.where(pmask.any(axis=0))[0]; ys = np.where(pmask.any(axis=1))[0]
             x0c, x1c, y0c, y1c = xs[0], xs[-1], ys[0], ys[-1]
-            slab = np.zeros_like(om)
             sx0 = 0 if "l" in plaque_pos else max(0, x0c - m2)
             sx1 = min(nxb, x1c + 1 + m2) if "l" in plaque_pos else nxb
             sy0 = 0 if "t" in plaque_pos else max(0, y0c - m2)
             sy1 = min(nyb, y1c + 1 + m2) if "t" in plaque_pos else nyb
-            slab[sy0:sy1, sx0:sx1] = True
-            if not (slab & om).any():                # slab never meets the shape: bridge it
+            if om.any():
+                # grow the corner rectangle toward the shape until it swallows the
+                # nearest organic point (+6 mm) — square crop meets organic boundary
+                m3 = int(round(6.0 / P))
                 pts_om = np.argwhere(om)
-                if len(pts_om):
-                    cy, cx = (y0c + y1c) // 2, (x0c + x1c) // 2
-                    d2 = (pts_om[:, 0] - cy) ** 2 + (pts_om[:, 1] - cx) ** 2
-                    ty, tx = pts_om[np.argmin(d2)]
-                    bimg2 = Image.new("L", (nxb, nyb), 0)
-                    ImageDraw.Draw(bimg2).line([(int(cx), int(cy)), (int(tx), int(ty))],
-                                               fill=255, width=max(4, int(round(6.0 / P))))
-                    slab |= np.asarray(bimg2) > 0
+                cy, cx = (y0c + y1c) // 2, (x0c + x1c) // 2
+                d2 = (pts_om[:, 0] - cy) ** 2 + (pts_om[:, 1] - cx) ** 2
+                ty, tx = pts_om[np.argmin(d2)]
+                if "l" in plaque_pos:
+                    sx1 = max(sx1, min(nxb, tx + m3))
+                else:
+                    sx0 = min(sx0, max(0, tx - m3))
+                if "t" in plaque_pos:
+                    sy1 = max(sy1, min(nyb, ty + m3))
+                else:
+                    sy0 = min(sy0, max(0, ty - m3))
+            slab = np.zeros_like(om)
+            slab[sy0:sy1, sx0:sx1] = True
             om |= slab
         if om.any():
             base_mask = om

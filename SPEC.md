@@ -200,10 +200,11 @@ base plate outline from the content:
   smoothed (reuse the blobbiness machinery), holes filled (no donuts).
 - **Ride:** the route ribbon dilated by `organic_pad_mm`, smoothed. Out-and-backs give a
   thick organic band; loops give a ring with the interior filled.
-- **Plaque corner:** in organic mode the plaque's corner remains a SQUARE crop — a slab
-  from the plaque (plus ~2 mm margin) out to the two adjacent board edges, unioned with
-  the organic shape; if the slab never meets the shape, a short connector bridges to the
-  nearest point of it. The plate is always one connected piece around the plaque.
+- **Plaque corner:** in organic mode the plaque's corner remains a SQUARE crop — a
+  rectangle from the two adjacent board edges that GROWS toward the content until it
+  swallows the nearest organic point (+6 mm), so the square boundary meets the organic
+  curve at their intersection. No thin connector sticks; the plate is always one
+  connected piece around the plaque.
 - **Outline hierarchy:** the hole-outline ring yields to turf polygons but OVERWRITES
   line layers (roads/rail/cartpaths) — `(lbl == 0) | (lbl > N_POLY)`.
 - Implementation: a `base_mask` (bool, cell grid) replaces the implicit full-rect mask.
