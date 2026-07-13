@@ -168,7 +168,7 @@ function download(){
     if(p.holes) msg.holes=p.holes;     // the creator's edited hole labels, strays excluded
     if(p.title) msg.title=p.title; if(p.subtitle) msg.subtitle=p.subtitle;
     if(p.pitch) msg.pitch=p.pitch; if(p.plaquePos) msg.plaquePos=p.plaquePos;
-    ['heights','outlineBlob','corridorW','outlineH','numSize','numH','numFlat','plaqueSize','cropShape','organicPad']
+    ['heights','outlineBlob','corridorW','outlineH','numSize','numH','numFlat','plaqueSize','cropShape','organicPad','outlineMode']
       .forEach(k=>{ if(p[k]!=null) msg[k]=p[k]; });
     if(p.route){ msg.route=p.route; msg.kind=p.kind||design.type; msg.holes=[]; if(p.routeW) msg.routeW=p.routeW; if(p.routeH) msg.routeH=p.routeH; }
     worker.postMessage(msg); };

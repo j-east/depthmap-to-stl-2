@@ -105,12 +105,118 @@ def _mesh(mask, ztop, zbot, BH, pitch):
     return V.astype(np.float32), np.concatenate(F).astype(np.uint32)
 
 
+def _outline_mask(holes, feats, ss_px, _down, nxb, nyb, SS, P, cw, blob, mode):
+    """Hole-corridor outline mask (pre lbl/base clipping). mode 'union' joins all
+    corridors + turf into one organic shape; 'holes' rings each hole separately so
+    overlaps read as crossing OB lines. Shared by golf_board and marks_layer."""
+    blob = min(1.0, max(0.0, float(blob)))
+    rad = cw * (0.08 + 0.32 * blob)
+    ring_w = max(1, int(round(1.4 / P)))
+    pad = max(1, int(round(0.8 / P)))
+    def ring(img):
+        img = img.filter(ImageFilter.GaussianBlur(rad))
+        mm = _down(img)
+        mm = ~_erode(~mm, pad)              # nudge outward so the ring clears turf edges
+        return mm & ~_erode(mm, ring_w)
+    def stroke(d, pts):
+        d.line(pts, fill=255, width=cw, joint="curve")
+        for p in (pts[0], pts[-1]):         # round caps: no flat cut at tee/pin
+            d.ellipse([p[0] - cw / 2, p[1] - cw / 2, p[0] + cw / 2, p[1] + cw / 2], fill=255)
+    if str(mode) == "holes":
+        out = np.zeros((nyb, nxb), bool)
+        for h in holes:
+            pts = [ss_px(lo, la) for lo, la in h["pts"]]
+            if len(pts) < 2:
+                continue
+            im1 = Image.new("L", (nxb * SS, nyb * SS), 0)
+            stroke(ImageDraw.Draw(im1), pts)
+            out |= ring(im1)
+        return out
+    corr = Image.new("L", (nxb * SS, nyb * SS), 0)
+    cd = ImageDraw.Draw(corr)
+    for h in holes:
+        pts = [ss_px(lo, la) for lo, la in h["pts"]]
+        if len(pts) >= 2:
+            stroke(cd, pts)
+    # wrap the turf shapes so the ring flows around tees/greens/bunkers, never through
+    for name in ("fairway", "tee", "green", "bunker"):
+        for way in feats.get(name, []):
+            pts = [ss_px(lo, la) for lo, la in way]
+            if len(pts) >= 3:
+                cd.polygon(pts, fill=255)
+    return ring(corr)
+
+
+def _number_objs(holes, raw_font, num_size, num_h, num_flat, water, base_mask,
+                 Zt, ll_px, nxb, nyb, SS, P, _down, BH):
+    """Raised hole numbers (+ optional flattened discs). Shared by golf_board and
+    the live marks_layer remesh — keep behavior in sync with SPEC §2a."""
+    fpx = max(6, int(round(float(num_size) / P)))
+    font = ImageFont.truetype(io.BytesIO(bytes(raw_font)), fpx * SS)
+    def place(pts_px):                       # prefer hole midpoint, but keep off water
+        for t in (0.5, 0.45, 0.55, 0.4, 0.6, 0.35, 0.65, 0.3, 0.7):
+            x, y = _point_at(pts_px, t); xi, yi = int(x), int(y)
+            if 0 <= xi < nxb and 0 <= yi < nyb and not water[yi, xi]:
+                return (x, y)
+        return _point_at(pts_px, 0.5)
+    labels = []
+    for h in holes:
+        num = str(h.get("num") or "").strip()
+        if not num:
+            continue
+        if h.get("lx") is not None and h.get("ly") is not None:   # user-placed
+            x, y = ll_px(h["lx"], h["ly"]); labels.append([num, x, y, True])
+        else:
+            mx, my = place([ll_px(lo, la) for lo, la in h["pts"]]); labels.append([num, mx, my, False])
+    _declutter(labels, fpx * 1.5, nxb, nyb)        # push apart if too close
+    nimg = Image.new("L", (nxb * SS, nyb * SS), 0); nd = ImageDraw.Draw(nimg)
+    for L in labels:
+        nd.text((L[1] * SS, L[2] * SS), L[0], font=font, fill=255, anchor="mm")
+    nmask = _down(nimg) & base_mask
+    objs = []
+    if nmask.any() and num_flat:
+        # flattened disc under each number: digits sit level on steep terrain
+        dimg = Image.new("L", (nxb * SS, nyb * SS), 0); dd = ImageDraw.Draw(dimg)
+        ry = float(num_size) * 0.85 / P * SS
+        for L in labels:
+            bb = font.getbbox(L[0]); rx = (bb[2] - bb[0]) / 2 + fpx * SS * 0.4
+            dd.ellipse([L[1] * SS - rx, L[2] * SS - ry, L[1] * SS + rx, L[2] * SS + ry], fill=255)
+        dmask = _down(dimg) & base_mask
+        NEG = -1e18
+        zmx = np.where(dmask, Zt[:-1, :-1], NEG)     # per-disc flat top = local max
+        for _ in range(600):
+            zn = zmx.copy()
+            zn[1:, :] = np.maximum(zn[1:, :], zmx[:-1, :])
+            zn[:-1, :] = np.maximum(zn[:-1, :], zmx[1:, :])
+            zn[:, 1:] = np.maximum(zn[:, 1:], zmx[:, :-1])
+            zn[:, :-1] = np.maximum(zn[:, :-1], zmx[:, 1:])
+            zn = np.where(dmask, zn, NEG)
+            if np.array_equal(zn, zmx):
+                break
+            zmx = zn
+        lvlp = np.where(dmask, zmx + 0.5, NEG)
+        Dtop = np.full_like(Zt, NEG)
+        for dr in (0, 1):
+            for dc in (0, 1):
+                sub = Dtop[dr:dr + nyb, dc:dc + nxb]
+                np.maximum(sub, lvlp, out=sub)
+        Dtop = np.where(Dtop < -1e17, Zt + 0.5, Dtop)
+        V, F = _mesh(dmask, Dtop, Zt - EMBED, BH, P)
+        objs.append(("numplate", (36, 78, 46), V, F))
+        V, F = _mesh(nmask & dmask, Dtop + float(num_h), Dtop - 0.2, BH, P)
+        objs.append(("numbers", (245, 245, 245), V, F))
+    elif nmask.any():
+        V, F = _mesh(nmask, Zt + float(num_h), Zt - EMBED, BH, P)
+        objs.append(("numbers", (245, 245, 245), V, F))
+    return objs
+
+
 def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
                holes_json="[]", font_bytes=None, pitch=None, route_json="[]", route_kind="bike",
                hide_json="[]", route_w=2.4, route_h=1.0, title="", subtitle="", plaque_pos="bl",
                heights_json="{}", outline_blob=0.45, corridor_w=60.0, outline_h=0.9,
                num_size=9.0, num_h=1.1, num_flat=False, plaque_size=1.0,
-               crop_shape="rect", organic_pad_mm=8.0):
+               crop_shape="rect", organic_pad_mm=8.0, outline_mode="union"):
     P = float(pitch) if pitch else PITCH       # mesh pitch (mm); coarse for fast previews
     raw = dem_in.to_py() if hasattr(dem_in, "to_py") else dem_in
     if not ncols:                       # raw is a float32 GeoTIFF -> decode
@@ -334,92 +440,18 @@ def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
             V, F = _mesh(smask, Zt + 1.4, Zt - EMBED, BH, P)
             objects.append(("start", (245, 245, 245), V, F))
 
-    # hole outlines: corridor union + turf wrap, blobbiness-controlled smoothing
+    # hole outlines + raised numbers (shared helpers — also used by the live remesh)
     if holes and not hide_outline:
-        corr = Image.new("L", (nxb * SS, nyb * SS), 0); cd = ImageDraw.Draw(corr)
-        for h in holes:
-            pts = [ss_px(lo, la) for lo, la in h["pts"]]
-            if len(pts) >= 2:
-                cd.line(pts, fill=255, width=cw, joint="curve")
-                for p in (pts[0], pts[-1]):                 # round caps: no flat cut at tee/pin
-                    cd.ellipse([p[0] - cw / 2, p[1] - cw / 2, p[0] + cw / 2, p[1] + cw / 2], fill=255)
-        # wrap the turf shapes so the ring flows around tees/greens/bunkers, never through them
-        for name in TURF:
-            for way in feats.get(name, []):
-                pts = [ss_px(lo, la) for lo, la in way]
-                if len(pts) >= 3:
-                    cd.polygon(pts, fill=255)
-        # blobbiness: gaussian radius as a fraction of corridor width (0 crisp .. 1 organic)
-        blob = min(1.0, max(0.0, float(outline_blob)))
-        corr = corr.filter(ImageFilter.GaussianBlur(cw * (0.08 + 0.32 * blob)))
-        corr = _down(corr)
-        pad = max(1, int(round(0.8 / P)))
-        corr = ~_erode(~corr, pad)          # dilate outward so the ring clears the turf edges
-        outline = (corr & ~_erode(corr, max(1, int(round(1.4 / P))))) & (lbl == 0) & base_mask
-        if outline.any():
-            V, F = _mesh(outline, Zt + float(outline_h), Zt - EMBED, BH, P)
+        om = _outline_mask(holes, feats, ss_px, _down, nxb, nyb, SS, P,
+                           cw, outline_blob, outline_mode) & (lbl == 0) & base_mask
+        if om.any():
+            V, F = _mesh(om, Zt + float(outline_h), Zt - EMBED, BH, P)
             objects.append(("outline", (28, 64, 38), V, F))      # dark green
-
-    # raised hole numbers (independent of the outline)
     if holes and not hide_numbers:
         raw_font = font_bytes.to_py() if hasattr(font_bytes, "to_py") else font_bytes
         if raw_font is not None:
-            fpx = max(6, int(round(float(num_size) / P)))
-            font = ImageFont.truetype(io.BytesIO(bytes(raw_font)), fpx * SS)
-            def place(pts_px):                       # prefer hole midpoint, but keep off water
-                for t in (0.5, 0.45, 0.55, 0.4, 0.6, 0.35, 0.65, 0.3, 0.7):
-                    x, y = _point_at(pts_px, t); xi, yi = int(x), int(y)
-                    if 0 <= xi < nxb and 0 <= yi < nyb and not water[yi, xi]:
-                        return (x, y)
-                return _point_at(pts_px, 0.5)
-            labels = []
-            for h in holes:
-                num = str(h.get("num") or "").strip()
-                if not num:
-                    continue
-                if h.get("lx") is not None and h.get("ly") is not None:   # user-placed
-                    x, y = ll_px(h["lx"], h["ly"]); labels.append([num, x, y, True])
-                else:
-                    mx, my = place([ll_px(lo, la) for lo, la in h["pts"]]); labels.append([num, mx, my, False])
-            _declutter(labels, fpx * 1.5, nxb, nyb)        # push apart if too close
-            nimg = Image.new("L", (nxb * SS, nyb * SS), 0); nd = ImageDraw.Draw(nimg)
-            for L in labels:
-                nd.text((L[1] * SS, L[2] * SS), L[0], font=font, fill=255, anchor="mm")
-            nmask = _down(nimg) & base_mask
-            if nmask.any() and num_flat:
-                # flattened disc under each number: digits sit level on steep terrain
-                dimg = Image.new("L", (nxb * SS, nyb * SS), 0); dd = ImageDraw.Draw(dimg)
-                ry = float(num_size) * 0.85 / P * SS
-                for L in labels:
-                    bb = font.getbbox(L[0]); rx = (bb[2] - bb[0]) / 2 + fpx * SS * 0.4
-                    dd.ellipse([L[1] * SS - rx, L[2] * SS - ry, L[1] * SS + rx, L[2] * SS + ry], fill=255)
-                dmask = _down(dimg) & base_mask
-                NEG = -1e18
-                zmx = np.where(dmask, Zt[:-1, :-1], NEG)     # per-disc flat top = local max
-                for _ in range(600):
-                    zn = zmx.copy()
-                    zn[1:, :] = np.maximum(zn[1:, :], zmx[:-1, :])
-                    zn[:-1, :] = np.maximum(zn[:-1, :], zmx[1:, :])
-                    zn[:, 1:] = np.maximum(zn[:, 1:], zmx[:, :-1])
-                    zn[:, :-1] = np.maximum(zn[:, :-1], zmx[:, 1:])
-                    zn = np.where(dmask, zn, NEG)
-                    if np.array_equal(zn, zmx):
-                        break
-                    zmx = zn
-                lvlp = np.where(dmask, zmx + 0.5, NEG)
-                Dtop = np.full_like(Zt, NEG)
-                for dr in (0, 1):
-                    for dc in (0, 1):
-                        sub = Dtop[dr:dr + nyb, dc:dc + nxb]
-                        np.maximum(sub, lvlp, out=sub)
-                Dtop = np.where(Dtop < -1e17, Zt + 0.5, Dtop)
-                V, F = _mesh(dmask, Dtop, Zt - EMBED, BH, P)
-                objects.append(("numplate", (36, 78, 46), V, F))
-                V, F = _mesh(nmask & dmask, Dtop + float(num_h), Dtop - 0.2, BH, P)
-                objects.append(("numbers", (245, 245, 245), V, F))
-            elif nmask.any():
-                V, F = _mesh(nmask, Zt + float(num_h), Zt - EMBED, BH, P)
-                objects.append(("numbers", (245, 245, 245), V, F))
+            objects += _number_objs(holes, raw_font, num_size, num_h, num_flat, water,
+                                    base_mask, Zt, ll_px, nxb, nyb, SS, P, _down, BH)
 
     # title plaque: flat rounded plate, raised name + subtitle (masks computed above)
     if pmask is not None and pmask.any():
@@ -482,6 +514,93 @@ def route_layer(dem_in, nrows, ncols, bbox, exag=4.0, base_mm=8.0,
     rmask = a.mean(axis=(1, 3)) >= 128
     V, F = _mesh(rmask, Zt + float(route_h), Zt - EMBED, BH, P)
     return {"verts": V.tobytes(), "tris": F.tobytes(), "ntri": int(len(F))}
+
+
+def marks_layer(dem_in, nrows, ncols, bbox, exag=4.0, base_mm=8.0,
+                feats_json="{}", holes_json="[]", font_bytes=None, pitch=None,
+                corridor_w=60.0, outline_blob=0.45, outline_h=0.9,
+                num_size=9.0, num_h=1.1, num_flat=False, outline_mode="union"):
+    """Remesh ONLY hole outlines + numbers on the last board's terrain grid — fast
+    enough to run live behind the blobbiness / corridor-width / number-size sliders.
+    Mirrors golf_board via the shared _outline_mask/_number_objs helpers."""
+    P = float(pitch) if pitch else PITCH
+    raw = dem_in.to_py() if hasattr(dem_in, "to_py") else dem_in
+    if not ncols:
+        dem = np.asarray(Image.open(io.BytesIO(bytes(raw))), dtype=np.float64)
+        nrows, ncols = dem.shape
+    else:
+        dem = np.asarray(raw, dtype=np.float64).reshape(nrows, ncols)
+    dem = np.where(dem < -1e10, np.nan, dem)
+    if np.isnan(dem).any():
+        dem = np.where(np.isnan(dem), np.nanmin(dem), dem)
+    feats = json.loads(feats_json)
+    holes = json.loads(holes_json) if holes_json else []
+    w, s, e, n = bbox
+    clat = (s + n) / 2
+    Wm = (e - w) * 111320 * math.cos(math.radians(clat))
+    Hm = (n - s) * 111320
+    BW, BH = (255.0, 255.0 * Hm / Wm) if Wm >= Hm else (255.0 * Wm / Hm, 255.0)
+    ZPM = (255.0 / max(Wm, Hm)) * exag
+    nyb, nxb = int(BH / P), int(BW / P)
+    rr = np.clip((np.arange(nyb + 1) / nyb * (nrows - 1)).astype(int), 0, nrows - 1)
+    cc = np.clip((np.arange(nxb + 1) / nxb * (ncols - 1)).astype(int), 0, ncols - 1)
+    samp = dem[np.ix_(rr, cc)]
+    land = samp >= 0.0
+    datum = float(samp[land].min()) if land.any() else float(samp.min())
+    recess = min(base_mm - 2.0, 6.0)
+    land_z = base_mm + np.maximum(samp - datum, 0.0) * ZPM
+    ocean_z = base_mm - np.minimum(np.maximum(-samp, 0.0) * ZPM, recess)
+    Zt = np.where(samp >= 0.0, land_z, ocean_z).astype(np.float64)
+    def ll_px(lon, lat):
+        return ((lon - w) / (e - w) * nxb, (n - lat) / (n - s) * nyb)
+    px_per_m = (255.0 / max(Wm, Hm)) / P
+    SS = 3
+    def ss_px(lon, lat):
+        x, y = ll_px(lon, lat)
+        return (x * SS, y * SS)
+    def _down(im):
+        a = np.asarray(im, dtype=np.uint8).reshape(nyb, SS, nxb, SS)
+        return a.mean(axis=(1, 3)) >= 128
+    cw = max(2, int(round(float(corridor_w) * px_per_m * SS)))
+    # label grid so the ring keeps yielding to turf/roads (feats already hide-filtered)
+    lbl = np.zeros((nyb, nxb), np.uint8)
+    for i, (name, color, proud, kind, width_m) in enumerate(LAYERS):
+        ways = feats.get(name, [])
+        if not ways:
+            continue
+        im = Image.new("L", (nxb * SS, nyb * SS), 0)
+        d = ImageDraw.Draw(im)
+        for way in ways:
+            pts = [ss_px(lo, la) for lo, la in way]
+            if kind == "poly" and len(pts) >= 3:
+                d.polygon(pts, fill=255)
+            elif kind == "line" and len(pts) >= 2:
+                d.line(pts, fill=255, width=max(SS + 1, int(round(width_m * px_per_m * SS))), joint="curve")
+        lbl[_down(im)] = i + 1
+    # water mask, for number placement only
+    crr = np.clip(((np.arange(nyb) + 0.5) / nyb * (nrows - 1)).astype(int), 0, nrows - 1)
+    ccc = np.clip(((np.arange(nxb) + 0.5) / nxb * (ncols - 1)).astype(int), 0, ncols - 1)
+    cell = dem[np.ix_(crr, ccc)]
+    wimg = Image.new("L", (nxb * SS, nyb * SS), 0); wd = ImageDraw.Draw(wimg)
+    for way in feats.get("water", []):
+        pts = [ss_px(lo, la) for lo, la in way]
+        if len(pts) >= 3:
+            wd.polygon(pts, fill=255)
+    water = (_down(wimg) | (cell < SEA_LEVEL)) & (lbl == 0)
+    base_mask = np.ones((nyb, nxb), bool)   # organic clipping happens at the real bake
+    objects = []
+    om = _outline_mask(holes, feats, ss_px, _down, nxb, nyb, SS, P,
+                       cw, outline_blob, outline_mode) & (lbl == 0)
+    if om.any():
+        V, F = _mesh(om, Zt + float(outline_h), Zt - EMBED, BH, P)
+        objects.append(("outline", (28, 64, 38), V, F))
+    raw_font = font_bytes.to_py() if hasattr(font_bytes, "to_py") else font_bytes
+    if raw_font is not None and holes:
+        objects += _number_objs(holes, raw_font, num_size, num_h, num_flat, water,
+                                base_mask, Zt, ll_px, nxb, nyb, SS, P, _down, BH)
+    return {"objects": [{"name": nm, "color": "#%02X%02X%02X" % col,
+                         "verts": V.tobytes(), "tris": F.tobytes(), "ntri": int(len(F))}
+                        for nm, col, V, F in objects]}
 
 
 def _xml_vert_chunks(V, ch=250_000):

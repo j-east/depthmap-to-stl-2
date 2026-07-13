@@ -59,14 +59,15 @@ regenerate/download/publish (none are live unless stated).
 | Param | Control | msg / kwarg / recipe key | Range | Default | Notes |
 |---|---|---|---|---|---|
 | element heights | per-group sliders | `heights` / `heights_json` / `heights` | 0.1–2.5 mm (turf: 0.25–2.5×) | road .4 · trail .5 · rail .7 · water .15 · turf 1.0× | LIVE via per-layer GPU uniforms (uH); turf is a MULTIPLIER on the four turf defaults (fairway .5/tee .6/green .8/bunker .6) |
-| outline blobbiness | slider | `outlineBlob` / `outline_blob` / `outlineBlob` | 0–1 | 0.45 | maps to gaussian blur radius = corridor_width × (0.08 + 0.32×blob); 0 ≈ crisp union, 1 ≈ very organic |
-| corridor width | slider | `corridorW` / `corridor_w` / `corridorW` | 30–120 m | 60 | hole corridor stroke width (feeds the outline union) |
-| hole number size | slider | `numSize` / `num_size` / `numSize` | 5–16 mm | 9 | font size on board |
+| outline blobbiness | slider | `outlineBlob` / `outline_blob` / `outlineBlob` | 0–1 | 0.45 | gaussian radius = corridor_width × (0.08 + 0.32×blob); LIVE via marks remesh |
+| corridor width | slider | `corridorW` / `corridor_w` / `corridorW` | 30–120 m | 60 | corridor stroke width; LIVE via marks remesh |
+| hole number size | slider | `numSize` / `num_size` / `numSize` | 5–16 mm | 9 | LIVE via marks remesh |
 | hole number height | slider | `numH` / `num_h` / `numH` | 0.4–2.5 mm | 1.1 | LIVE via uniform (except when flattened) |
 | number flatten | toggle | `numFlat` / `num_flat` / `numFlat` | on/off | off | digits sit on per-label flattened discs (`numplate` mesh, local-max level +0.5) |
 | outline height | slider | `outlineH` / `outline_h` / `outlineH` | 0.3–2 mm | 0.9 | LIVE via uniform |
 | plaque size | slider | `plaqueSize` / `plaque_size` / `plaqueSize` | 0.6–1.8× | 1.0 | scales plaque font sizes + padding together |
 | crop shape | toggle rect/organic | `cropShape` + `organicPad` / `crop_shape`,`organic_pad_mm` / same | rect·organic; pad 2–20 mm | rect | see §6 |
+| outline style | toggle joined/per-hole | `outlineMode` / `outline_mode` / `outlineMode` | union·holes | union | 'holes' rings each hole separately (no turf wrap) — crossings read as OB lines; LIVE via marks remesh |
 
 ### 2b. Feature-group split (IMPLEMENTED)
 
@@ -182,6 +183,12 @@ Hard-won behaviors. **Do not undo these.**
 14. **Live-height uniforms**: every layer's shader gets uC (baked proud) + uH (live
     slider) — heights, outline height, and number height move in realtime; the 3MF
     catches up via the dirty auto-bake.
+15. **Live marks remesh** (`marks_layer`): blobbiness, corridor width, outline style,
+    number size, and flatten rebuild ONLY the outline/numbers/numplate meshes from
+    cached data (debounced 350 ms) and hot-swap them. golf_board and marks_layer share
+    `_outline_mask` / `_number_objs` — never fork their logic. Organic-crop clipping of
+    these layers happens only at the real bake (live swap may slightly overhang).
+16. Advanced UI is grouped: "heights · live" / "outline & numbers" (golf) / "board".
 
 ## 6. Organic crops (IMPLEMENTED 2026-07-12)
 

@@ -117,21 +117,7 @@
     <div class="tip" id="reswarn" style="display:none;color:#ffb86b">ultra meshes take several minutes to build and make big downloads</div>
     <details id="advbox" style="margin-top:12px">
       <summary style="color:#9a9ab0;font-size:12px;cursor:pointer">advanced</summary>
-      <div data-golf="1">
-        <label>corridor width: <span id="advCwV">60</span> m</label>
-        <input type="range" id="advCw" min="30" max="120" step="5" value="60" style="width:100%">
-        <label>outline blobbiness: <span id="advBlobV">0.45</span></label>
-        <input type="range" id="advBlob" min="0" max="1" step="0.05" value="0.45" style="width:100%">
-        <label>outline height: <span id="advOlhV">0.9</span> mm</label>
-        <input type="range" id="advOlh" min="0.3" max="2" step="0.1" value="0.9" style="width:100%">
-        <label>number size: <span id="advNszV">9.0</span> mm</label>
-        <input type="range" id="advNsz" min="5" max="16" step="0.5" value="9" style="width:100%">
-        <label>number height: <span id="advNhV">1.1</span> mm</label>
-        <input type="range" id="advNh" min="0.4" max="2.5" step="0.1" value="1.1" style="width:100%">
-        <label class="feat" style="margin-top:8px"><input type="checkbox" id="advNflat"> flatten discs under numbers</label>
-        <label>turf height: <span id="advHturfV">1.00</span>×</label>
-        <input type="range" id="advHturf" min="0.25" max="2.5" step="0.05" value="1" style="width:100%">
-      </div>
+      <label style="color:#7dd3fc;margin-top:12px">— heights · live —</label>
       <label>road height: <span id="advHroadV">0.4</span> mm</label>
       <input type="range" id="advHroad" min="0.1" max="2.5" step="0.1" value="0.4" style="width:100%">
       <label>trail/path height: <span id="advHcartV">0.5</span> mm</label>
@@ -140,6 +126,30 @@
       <input type="range" id="advHrail" min="0.1" max="2.5" step="0.1" value="0.7" style="width:100%">
       <label>water height: <span id="advHwaterV">0.15</span> mm</label>
       <input type="range" id="advHwater" min="0" max="1" step="0.05" value="0.15" style="width:100%">
+      <div data-golf="1">
+        <label>turf height: <span id="advHturfV">1.00</span>×</label>
+        <input type="range" id="advHturf" min="0.25" max="2.5" step="0.05" value="1" style="width:100%">
+        <label>outline height: <span id="advOlhV">0.9</span> mm</label>
+        <input type="range" id="advOlh" min="0.3" max="2" step="0.1" value="0.9" style="width:100%">
+        <label>number height: <span id="advNhV">1.1</span> mm</label>
+        <input type="range" id="advNh" min="0.4" max="2.5" step="0.1" value="1.1" style="width:100%">
+      </div>
+      <div data-golf="1">
+        <label style="color:#7dd3fc;margin-top:12px">— outline &amp; numbers —</label>
+        <label>outline style</label>
+        <div class="kinds" id="olmodeRow">
+          <div class="kind on" data-o="union" onclick="setOutlineMode('union')">joined</div>
+          <div class="kind" data-o="holes" onclick="setOutlineMode('holes')">per-hole</div>
+        </div>
+        <label>corridor width: <span id="advCwV">60</span> m</label>
+        <input type="range" id="advCw" min="30" max="120" step="5" value="60" style="width:100%">
+        <label>outline blobbiness: <span id="advBlobV">0.45</span></label>
+        <input type="range" id="advBlob" min="0" max="1" step="0.05" value="0.45" style="width:100%">
+        <label>number size: <span id="advNszV">9.0</span> mm</label>
+        <input type="range" id="advNsz" min="5" max="16" step="0.5" value="9" style="width:100%">
+        <label class="feat" style="margin-top:8px"><input type="checkbox" id="advNflat"> flatten discs under numbers</label>
+      </div>
+      <label style="color:#7dd3fc;margin-top:12px">— board —</label>
       <label>plaque size: <span id="advPszV">1.00</span>×</label>
       <input type="range" id="advPsz" min="0.6" max="1.8" step="0.05" value="1" style="width:100%">
       <label>crop shape</label>
@@ -781,6 +791,7 @@ worker.onmessage=(ev)=>{ const m=ev.data; console.log('[tm] worker →',m.type,m
   if(m.type==='ready'){ workerReady=true; if(pendingFeatures){worker.postMessage({type:'features',bbox:pendingFeatures});pendingFeatures=null;} afterReady(); }
   else if(m.type==='features'){ onFeatures(m); }
   else if(m.type==='route'){ swapRouteMesh(m); }
+  else if(m.type==='marks'){ swapMarksMeshes(m); }
   else if(m.type==='progress'){ setStatus('<span class="spin"></span>'+m.msg,'#9fd'); log(m.msg); if(m.pct)pbar(m.pct); }
   else if(m.type==='error'){ setStatus('✕ '+m.msg,'#ff8a8a'); pendingAction=null; pbar(null);
     const gb=document.getElementById('gen'); gb.disabled=false; gb.textContent=gb.dataset.prev||'✓ Generate board';
@@ -968,7 +979,37 @@ document.getElementById('rw').addEventListener('input',()=>{
   },250);
 });
 // ---- advanced params (SPEC.md §2a) ----
-let cropShape='rect';
+let cropShape='rect', outlineMode='union';
+function setOutlineMode(o){ outlineMode=o==='holes'?'holes':'union';
+  document.querySelectorAll('#olmodeRow .kind').forEach(x=>x.classList.toggle('on',x.dataset.o===outlineMode));
+  markDirty(); scheduleMarks(); }
+// live remesh of just the outline + numbers (worker reuses cached DEM/features)
+let marksT=null;
+function scheduleMarks(){
+  clearTimeout(marksT);
+  marksT=setTimeout(()=>{
+    if(group&&workerReady&&MODE!=='ride')
+      worker.postMessage(Object.assign({type:'marks',outlineMode},advParams()));
+  },350);
+}
+function swapMarksMeshes(m){
+  if(!group) return;
+  ['outline','numbers','numplate'].forEach(nm=>{
+    const old=group.children.find(c=>c.name===nm);
+    if(old){ group.remove(old); old.geometry.dispose(); old.material.dispose(); }
+  });
+  m.objects.forEach(o=>{
+    const geo=new THREE.BufferGeometry();
+    geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(o.verts),3));
+    geo.setIndex(new THREE.BufferAttribute(new Uint32Array(o.tris),1)); geo.computeVertexNormals();
+    const mat=new THREE.MeshStandardMaterial({color:new THREE.Color(o.color),roughness:0.92,side:THREE.DoubleSide});
+    const c=liveProud(o.name);
+    let hu=LIVE_H.has(o.name)?huni(o.name):null; if(hu)hu.value=c;
+    patchMat(mat,c,hu);
+    const mesh=new THREE.Mesh(geo,mat); mesh.name=o.name; group.add(mesh);
+  });
+  applyVisibility();
+}
 function setCropShape(c){ cropShape=c==='organic'?'organic':'rect';
   document.querySelectorAll('#cropshapeRow .kind').forEach(x=>x.classList.toggle('on',x.dataset.c===cropShape));
   document.getElementById('orgpadrow').style.display=cropShape==='organic'?'block':'none';
@@ -978,15 +1019,19 @@ function advParams(){
   return { heights:{road:g('advHroad'),cartpath:g('advHcart'),rail:g('advHrail'),water:g('advHwater'),turf:g('advHturf')},
     outlineBlob:g('advBlob'), corridorW:g('advCw'), outlineH:g('advOlh'),
     numSize:g('advNsz'), numH:g('advNh'), numFlat:document.getElementById('advNflat').checked,
-    plaqueSize:g('advPsz'), cropShape, organicPad:g('advOpad') };
+    plaqueSize:g('advPsz'), cropShape, organicPad:g('advOpad'), outlineMode };
 }
 [['advCw','advCwV',0],['advBlob','advBlobV',2],['advOlh','advOlhV',1],['advNsz','advNszV',1],
  ['advNh','advNhV',1],['advHroad','advHroadV',1],['advHcart','advHcartV',1],['advHrail','advHrailV',1],
  ['advHwater','advHwaterV',2],['advHturf','advHturfV',2],['advPsz','advPszV',2],['advOpad','advOpadV',0]
 ].forEach(([id,vid,dec])=>{ const el=document.getElementById(id);
   el.addEventListener('input',()=>{ document.getElementById(vid).textContent=parseFloat(el.value).toFixed(dec);
-    markDirty(); refreshLiveHeights(); if(id==='advOpad'||id==='advCw') drawPlan(); }); });
-document.getElementById('advNflat').addEventListener('change',markDirty);
+    markDirty(); refreshLiveHeights();
+    if(id==='advOpad'||id==='advCw') drawPlan();
+    if(['advCw','advBlob','advNsz'].includes(id)||(id==='advNh'&&document.getElementById('advNflat').checked))
+      scheduleMarks();                       // shape changes: live outline/numbers remesh
+  }); });
+document.getElementById('advNflat').addEventListener('change',()=>{ markDirty(); refreshLiveHeights(); scheduleMarks(); });
 function setAdvFromParams(p){
   const set=(id,vid,v,dec)=>{ if(v==null)return; document.getElementById(id).value=v;
     document.getElementById(vid).textContent=(+v).toFixed(dec); };
@@ -998,6 +1043,7 @@ function setAdvFromParams(p){
   if(p.numFlat!=null) document.getElementById('advNflat').checked=!!p.numFlat;
   set('advPsz','advPszV',p.plaqueSize,2); set('advOpad','advOpadV',p.organicPad,0);
   if(p.cropShape) setCropShape(p.cropShape);
+  if(p.outlineMode) setOutlineMode(p.outlineMode);
 }
 
 const RESVALS=[0.7,0.5,0.35,0.25], RESNAMES=['draft','standard','high','ultra'];
