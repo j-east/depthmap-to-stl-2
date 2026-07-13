@@ -92,6 +92,8 @@
     <div id="dl"><a id="dla" download="golf.3mf">⬇ download 3MF</a></div>
     <button class="go" id="pub" style="margin-top:10px;width:100%">↑ Publish to gallery</button>
   </div>
+  <div class="tip" id="bakehint" style="display:none;color:#9fd">live preview — bakes in automatically when you download or publish</div>
+  <label class="tog"><input type="checkbox" id="spin" checked onchange="controls.autoRotate=this.checked"><span class="sw"></span> auto-rotate</label>
   <div id="layerbox" style="display:none">
     <label>board title (on the plaque)</label>
     <input id="btitle" placeholder="e.g. Pebble Beach" autocomplete="off">
@@ -162,9 +164,7 @@
         <input type="range" id="advOpad" min="2" max="20" step="1" value="8" style="width:100%">
       </div>
     </details>
-    <div class="tip" id="bakehint" style="display:none;color:#9fd">live preview — bakes in automatically when you download or publish</div>
   </div>
-  <label class="tog"><input type="checkbox" id="spin" checked onchange="controls.autoRotate=this.checked"><span class="sw"></span> auto-rotate</label>
   <div id="status"></div>
   <div id="pbar" style="display:none;height:6px;background:#22283a;border-radius:4px;overflow:hidden;margin-top:8px">
     <div id="pfill" style="height:100%;width:0%;background:linear-gradient(90deg,#2563eb,#4dd08a);transition:width .4s"></div>
@@ -792,7 +792,13 @@ worker.onmessage=(ev)=>{ const m=ev.data; console.log('[tm] worker →',m.type,m
   else if(m.type==='features'){ onFeatures(m); }
   else if(m.type==='route'){ swapRouteMesh(m); }
   else if(m.type==='marks'){ swapMarksMeshes(m); }
-  else if(m.type==='progress'){ setStatus('<span class="spin"></span>'+m.msg,'#9fd'); log(m.msg); if(m.pct)pbar(m.pct); }
+  else if(m.type==='progress'){ setStatus('<span class="spin"></span>'+m.msg,'#9fd'); log(m.msg);
+    if(m.pct){ pbar(m.pct);
+      // button narrates the phase: fetching OSM/DEM (<30%) vs meshing
+      const txt='<span class="spin"></span> '+(m.pct<30?'Loading map data…':'Generating…');
+      const gb=document.getElementById('gen'); if(gb.disabled) gb.innerHTML=txt;
+      const rb=document.getElementById('regen'); if(rb.disabled) rb.innerHTML=txt;
+    } }
   else if(m.type==='error'){ setStatus('✕ '+m.msg,'#ff8a8a'); pendingAction=null; pbar(null);
     const gb=document.getElementById('gen'); gb.disabled=false; gb.textContent=gb.dataset.prev||'✓ Generate board';
     const rb=document.getElementById('regen'); rb.disabled=false; rb.textContent='↻ Regenerate board'; }

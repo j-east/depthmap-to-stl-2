@@ -103,8 +103,11 @@ Anything here that disappears without a SPEC.md edit is a bug.
 - Done panel: `↻ Regenerate board` (only when dirty), `✎ Edit crop / labels`,
   `⬇ download 3MF` (account-gated, auto-bakes when dirty, place-named file),
   `↑ Publish to gallery` (account-gated, auto-bakes, stores full recipe)
-- Auto-rotate toggle (default ON), status line, progress bar (worker milestones + creep),
-  monospace log
+- Bake hint + auto-rotate toggle (default ON) sit directly below the Generate button
+  (between the done panel and the layerbox); status line, progress bar (worker
+  milestones + creep), monospace log
+- Generate/Regenerate buttons narrate the phase while running: "Loading map data…"
+  during the OSM/DEM fetch (<30%), then "Generating…"
 
 **Map editor (plan canvas):**
 - OSM raster tile basemap, Web-Mercator projection, "© OpenStreetMap" attribution
