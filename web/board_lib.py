@@ -16,6 +16,7 @@ LAYERS = [("fairway",  (150, 200, 104), 0.5, "poly", 0),
           ("rail",     (70, 70, 78),   0.7, "line", 3.5),
           ("cartpath", (212, 200, 180), 0.5, "line", 2.4)]
 WATER_COLOR = (58, 124, 190)
+N_POLY = sum(1 for _l in LAYERS if _l[3] == "poly")   # lbl <= N_POLY -> turf polygons
 # ride-loop ribbon colors by kind (bike / motorcycle / scenic drive)
 ROUTE_COLORS = {"bike": (240, 118, 44), "moto": (222, 62, 62), "drive": (245, 196, 66)}
 SEA_LEVEL = 0.3          # m: cells below this are water (real bathymetry from NOAA topobathy)
@@ -336,8 +337,30 @@ def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
         bimg = Image.fromarray(np.where(arr >= 20, 255, 0).astype(np.uint8))
         bimg = bimg.filter(ImageFilter.GaussianBlur(pad_px * 0.5))
         om = _down(bimg)
-        if pmask is not None:
-            om |= pmask                              # the plaque always has plate under it
+        if pmask is not None and pmask.any():
+            # the plaque's corner stays a SQUARE crop: a slab from the plaque (plus
+            # margin) out to the two adjacent board edges, meeting the organic shape
+            # where they intersect (SPEC §6)
+            m2 = int(round(2.0 / P))
+            xs = np.where(pmask.any(axis=0))[0]; ys = np.where(pmask.any(axis=1))[0]
+            x0c, x1c, y0c, y1c = xs[0], xs[-1], ys[0], ys[-1]
+            slab = np.zeros_like(om)
+            sx0 = 0 if "l" in plaque_pos else max(0, x0c - m2)
+            sx1 = min(nxb, x1c + 1 + m2) if "l" in plaque_pos else nxb
+            sy0 = 0 if "t" in plaque_pos else max(0, y0c - m2)
+            sy1 = min(nyb, y1c + 1 + m2) if "t" in plaque_pos else nyb
+            slab[sy0:sy1, sx0:sx1] = True
+            if not (slab & om).any():                # slab never meets the shape: bridge it
+                pts_om = np.argwhere(om)
+                if len(pts_om):
+                    cy, cx = (y0c + y1c) // 2, (x0c + x1c) // 2
+                    d2 = (pts_om[:, 0] - cy) ** 2 + (pts_om[:, 1] - cx) ** 2
+                    ty, tx = pts_om[np.argmin(d2)]
+                    bimg2 = Image.new("L", (nxb, nyb), 0)
+                    ImageDraw.Draw(bimg2).line([(int(cx), int(cy)), (int(tx), int(ty))],
+                                               fill=255, width=max(4, int(round(6.0 / P))))
+                    slab |= np.asarray(bimg2) > 0
+            om |= slab
         if om.any():
             base_mask = om
 
@@ -441,9 +464,11 @@ def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
             objects.append(("start", (245, 245, 245), V, F))
 
     # hole outlines + raised numbers (shared helpers — also used by the live remesh)
+    # hierarchy: the ring yields to turf but OVERWRITES line layers (roads/rail/paths)
     if holes and not hide_outline:
         om = _outline_mask(holes, feats, ss_px, _down, nxb, nyb, SS, P,
-                           cw, outline_blob, outline_mode) & (lbl == 0) & base_mask
+                           cw, outline_blob, outline_mode) \
+            & ((lbl == 0) | (lbl > N_POLY)) & base_mask
         if om.any():
             V, F = _mesh(om, Zt + float(outline_h), Zt - EMBED, BH, P)
             objects.append(("outline", (28, 64, 38), V, F))      # dark green
@@ -590,7 +615,7 @@ def marks_layer(dem_in, nrows, ncols, bbox, exag=4.0, base_mm=8.0,
     base_mask = np.ones((nyb, nxb), bool)   # organic clipping happens at the real bake
     objects = []
     om = _outline_mask(holes, feats, ss_px, _down, nxb, nyb, SS, P,
-                       cw, outline_blob, outline_mode) & (lbl == 0)
+                       cw, outline_blob, outline_mode) & ((lbl == 0) | (lbl > N_POLY))
     if om.any():
         V, F = _mesh(om, Zt + float(outline_h), Zt - EMBED, BH, P)
         objects.append(("outline", (28, 64, 38), V, F))
