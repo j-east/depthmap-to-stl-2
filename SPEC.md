@@ -98,7 +98,7 @@ Anything here that disappears without a SPEC.md edit is a bug.
   picker, feature checkboxes (turf / outline / numbers [golf-only rows hidden in ride
   mode] / roads / trails & paths / railways / water / title plaque), ride-only ribbon
   thickness + route height sliders, vertical exaggeration slider, resolution slider
-  (+ ultra warning), bake hint, **[PLANNED] advanced `<details>` with §2a params**
+  (+ ultra warning), bake hint, advanced `<details>` with the §2a params
 - Done panel: `↻ Regenerate board` (only when dirty), `✎ Edit crop / labels`,
   `⬇ download 3MF` (account-gated, auto-bakes when dirty, place-named file),
   `↑ Publish to gallery` (account-gated, auto-bakes, stores full recipe)
