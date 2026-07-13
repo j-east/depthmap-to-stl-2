@@ -280,7 +280,8 @@ def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
 
     cw = max(2, int(round(float(corridor_w) * px_per_m * SS)))   # hole corridor width (px, SS)
 
-    # ---- plaque layout first (its plate is unioned into an organic base) ----
+    # ---- plaque metrics (drawn after the base mask so organic mode can auto-place) ----
+    pg = None
     pmask = tmask = None
     raw_tf = font_bytes.to_py() if hasattr(font_bytes, "to_py") else font_bytes
     if title and raw_tf is not None and "plaque" not in hide:
@@ -289,26 +290,19 @@ def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
         f2 = ImageFont.truetype(io.BytesIO(bytes(raw_tf)), max(6, int(round(3.6 * ps / P * SS)))) if t2 else None
         b1 = f1.getbbox(t1); w1, h1 = b1[2] - b1[0], b1[3] - b1[1]
         w2 = h2 = 0
+        b2 = None
         if f2:
             b2 = f2.getbbox(t2); w2, h2 = b2[2] - b2[0], b2[3] - b2[1]
         padx = int(round(3.0 * ps / P * SS)); pady = int(round(2.2 * ps / P * SS))
         gap = int(round(1.4 * ps / P * SS)) if t2 else 0
-        pw = min(max(w1, w2) + padx * 2, nxb * SS - 2)
-        ph = h1 + h2 + gap + pady * 2
-        inset = int(round(5.0 / P * SS))
-        x0 = inset if "l" in plaque_pos else nxb * SS - inset - pw
-        y0 = inset if "t" in plaque_pos else nyb * SS - inset - ph
-        pimg = Image.new("L", (nxb * SS, nyb * SS), 0); pd = ImageDraw.Draw(pimg)
-        pd.rounded_rectangle([x0, y0, x0 + pw, y0 + ph], radius=int(round(2.5 * ps / P * SS)), fill=255)
-        pmask = _down(pimg)
-        timg = Image.new("L", (nxb * SS, nyb * SS), 0); td = ImageDraw.Draw(timg)
-        td.text((x0 + padx - b1[0], y0 + pady - b1[1]), t1, font=f1, fill=255)
-        if f2:
-            td.text((x0 + padx - b2[0], y0 + pady + h1 + gap - b2[1]), t2, font=f2, fill=255)
-        tmask = _down(timg) & pmask
+        pg = {"t1": t1, "t2": t2, "f1": f1, "f2": f2, "b1": b1, "b2": b2,
+              "padx": padx, "pady": pady, "gap": gap, "h1": h1,
+              "pw": min(max(w1, w2) + padx * 2, nxb * SS - 2),
+              "ph": h1 + h2 + gap + pady * 2}
 
     # ---- base plate mask: full rectangle, or organic footprint of the content ----
     base_mask = np.ones((nyb, nxb), bool)
+    px0 = py0 = None                                 # plaque origin (SS px), resolved below
     if str(crop_shape) == "organic":
         pad_px = max(2, int(round(float(organic_pad_mm) / P * SS)))
         bimg = Image.new("L", (nxb * SS, nyb * SS), 0)
@@ -337,38 +331,53 @@ def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
         bimg = Image.fromarray(np.where(arr >= 20, 255, 0).astype(np.uint8))
         bimg = bimg.filter(ImageFilter.GaussianBlur(pad_px * 0.5))
         om = _down(bimg)
-        if pmask is not None and pmask.any():
-            # the plaque's corner stays a SQUARE crop: a slab from the plaque (plus
-            # margin) out to the two adjacent board edges, meeting the organic shape
-            # where they intersect (SPEC §6)
-            m2 = int(round(2.0 / P))
-            xs = np.where(pmask.any(axis=0))[0]; ys = np.where(pmask.any(axis=1))[0]
-            x0c, x1c, y0c, y1c = xs[0], xs[-1], ys[0], ys[-1]
-            sx0 = 0 if "l" in plaque_pos else max(0, x0c - m2)
-            sx1 = min(nxb, x1c + 1 + m2) if "l" in plaque_pos else nxb
-            sy0 = 0 if "t" in plaque_pos else max(0, y0c - m2)
-            sy1 = min(nyb, y1c + 1 + m2) if "t" in plaque_pos else nyb
-            if om.any():
-                # grow the corner rectangle toward the shape until it swallows the
-                # nearest organic point (+6 mm) — square crop meets organic boundary
-                m3 = int(round(6.0 / P))
-                pts_om = np.argwhere(om)
-                cy, cx = (y0c + y1c) // 2, (x0c + x1c) // 2
-                d2 = (pts_om[:, 0] - cy) ** 2 + (pts_om[:, 1] - cx) ** 2
-                ty, tx = pts_om[np.argmin(d2)]
-                if "l" in plaque_pos:
-                    sx1 = max(sx1, min(nxb, tx + m3))
-                else:
-                    sx0 = min(sx0, max(0, tx - m3))
-                if "t" in plaque_pos:
-                    sy1 = max(sy1, min(nyb, ty + m3))
-                else:
-                    sy0 = min(sy0, max(0, ty - m3))
-            slab = np.zeros_like(om)
-            slab[sy0:sy1, sx0:sx1] = True
-            om |= slab
         if om.any():
+            if pg is not None:
+                # AUTO-PLACE the plaque: slide inward from the preferred corner toward
+                # the shape until it sits mostly INSIDE the organic boundary (SPEC §6)
+                pwc, phc = int(math.ceil(pg["pw"] / SS)), int(math.ceil(pg["ph"] / SS))
+                pwc, phc = min(pwc, nxb - 2), min(phc, nyb - 2)
+                inset_c = max(1, int(round(5.0 / P)))
+                cx = inset_c if "l" in plaque_pos else nxb - inset_c - pwc
+                cy = inset_c if "t" in plaque_pos else nyb - inset_c - phc
+                pts_om = np.argwhere(om)
+                ccy, ccx = cy + phc // 2, cx + pwc // 2
+                d2 = (pts_om[:, 0] - ccy) ** 2 + (pts_om[:, 1] - ccx) ** 2
+                ty, tx = pts_om[np.argmin(d2)]
+                tx0, ty0 = int(tx) - pwc // 2, int(ty) - phc // 2
+                steps = 80
+                cxf, cyf = cx, cy
+                for i in range(steps + 1):
+                    f = i / steps
+                    rx = max(0, min(nxb - pwc, int(round(cx + (tx0 - cx) * f))))
+                    ry = max(0, min(nyb - phc, int(round(cy + (ty0 - cy) * f))))
+                    cxf, cyf = rx, ry
+                    if om[ry:ry + phc, rx:rx + pwc].sum() >= 0.6 * pwc * phc:
+                        break
+                px0, py0 = cxf * SS, cyf * SS
+                m2 = int(round(2.0 / P))
+                om[max(0, cyf - m2):min(nyb, cyf + phc + m2),
+                   max(0, cxf - m2):min(nxb, cxf + pwc + m2)] = True   # pad under the plate
             base_mask = om
+
+    # ---- draw the plaque masks at the resolved position ----
+    if pg is not None:
+        if px0 is None:                              # rect crop: classic corner placement
+            inset = int(round(5.0 / P * SS))
+            px0 = inset if "l" in plaque_pos else nxb * SS - inset - pg["pw"]
+            py0 = inset if "t" in plaque_pos else nyb * SS - inset - pg["ph"]
+        pimg = Image.new("L", (nxb * SS, nyb * SS), 0); pd = ImageDraw.Draw(pimg)
+        pd.rounded_rectangle([px0, py0, px0 + pg["pw"], py0 + pg["ph"]],
+                             radius=int(round(2.5 * ps / P * SS)), fill=255)
+        pmask = _down(pimg)
+        timg = Image.new("L", (nxb * SS, nyb * SS), 0); td = ImageDraw.Draw(timg)
+        td.text((px0 + pg["padx"] - pg["b1"][0], py0 + pg["pady"] - pg["b1"][1]),
+                pg["t1"], font=pg["f1"], fill=255)
+        if pg["f2"]:
+            td.text((px0 + pg["padx"] - pg["b2"][0],
+                     py0 + pg["pady"] + pg["h1"] + pg["gap"] - pg["b2"][1]),
+                    pg["t2"], font=pg["f2"], fill=255)
+        tmask = _down(timg) & pmask
 
     # exclusive label grid (precedence by draw order; lines stroked over turf)
     lbl = np.zeros((nyb, nxb), np.uint8)
