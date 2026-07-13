@@ -111,7 +111,8 @@ function packMesh(objsMap){
   return out;
 }
 
-let lastGen=null;                    // bbox/exag of the last full build (dem_bytes etc. persist as pyodide globals)
+let lastGen=null;                    // bbox/exag of the last full build (dem_merged persists as a pyodide global)
+let cacheKey=null, cacheFeats=null, cacheHoles=null;   // per-bbox OSM cache: regenerate = remesh, no refetch
 onmessage = async (ev)=>{
   const m=ev.data;
   if(m.type==='route'){              // live thickness/height: remesh only the ribbon
@@ -138,18 +139,30 @@ onmessage = async (ev)=>{
   const t0=Date.now();
   try{
     const [w,s,e,n]=m.bbox;
-    postMessage({type:'progress',msg:'fetching terrain + OSM…',pct:6});
-    const [dem,ff]=await Promise.all([fetchDEM(w,s,e,n), fetchFeatures(w,s,e,n)]);
     const route=m.route||[], kind=m.kind||'bike', hide=m.hide||[], routeW=+m.routeW||2.4, routeH=+m.routeH||1.0;
+    // same bbox as last time -> reuse the fetched DEM (pyodide global) and OSM features;
+    // regenerating with new settings is then pure remeshing, no network
+    const key=m.bbox.join(',');
+    let ff, demNote;
+    if(key===cacheKey&&cacheFeats){
+      postMessage({type:'progress',msg:'reusing fetched terrain + OSM',pct:28});
+      ff={feats:JSON.parse(cacheFeats), holes:cacheHoles};
+      demNote='cached DEM';
+    }else{
+      postMessage({type:'progress',msg:'fetching terrain + OSM…',pct:6});
+      const [dem,ffx]=await Promise.all([fetchDEM(w,s,e,n), fetchFeatures(w,s,e,n)]);
+      pyodide.globals.set('dep_bytes',dem.dep);
+      pyodide.globals.set('noaa_bytes',dem.noaa);
+      pyodide.runPython(MERGE_PY);        // -> dem_merged (seam-free land + real bathymetry)
+      cacheKey=key; cacheFeats=JSON.stringify(ffx.feats); cacheHoles=ffx.holes;   // pre-hide copy
+      ff=ffx; demNote=`DEM ${dem.W}x${dem.H}`;
+    }
     hide.forEach(k=>{ delete ff.feats[k]; });        // excluded features never reach the mesher
     // m.holes = user-edited labels from the edit step; ride boards never get golf numbers
     const holes=route.length ? (m.holes||[]) : (m.holes||ff.holes);
     const counts=Object.fromEntries(Object.entries(ff.feats).map(([k,v])=>[k,v.length]));
-    postMessage({type:'progress',msg:`DEM ${dem.W}x${dem.H}, ${holes.length} holes, ${JSON.stringify(counts)} (${((Date.now()-t0)/1000).toFixed(1)}s)`,pct:30});
+    postMessage({type:'progress',msg:`${demNote}, ${holes.length} holes, ${JSON.stringify(counts)} (${((Date.now()-t0)/1000).toFixed(1)}s)`,pct:30});
     const t1=Date.now();
-    pyodide.globals.set('dep_bytes',dem.dep);
-    pyodide.globals.set('noaa_bytes',dem.noaa);
-    pyodide.runPython(MERGE_PY);          // -> dem_merged (seam-free land + real bathymetry)
     pyodide.globals.set('feats_json',JSON.stringify(ff.feats));
     pyodide.globals.set('holes_json',JSON.stringify(holes));
     pyodide.globals.set('font_bytes',FONT);

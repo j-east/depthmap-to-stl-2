@@ -4,10 +4,12 @@
 <style>
   *{box-sizing:border-box} body{margin:0;background:#11151a;color:#dde;font:14px -apple-system,sans-serif;display:flex;height:100vh}
   a{color:#7dd3fc;text-decoration:none}
-  #side{width:300px;padding:16px;flex-shrink:0;overflow:auto}
+  #side{width:300px;min-width:300px;max-width:300px;padding:16px;flex-shrink:0;
+        overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable}
   h1{font-size:16px;color:#fff;margin:0 0 4px} button{background:#2563eb;color:#fff;border:0;border-radius:7px;padding:10px 14px;font-size:14px;cursor:pointer}
   button:disabled{background:#33415a;cursor:default} button.go{width:100%;background:#1f7a3a;font-weight:600}
-  label{display:block;margin:10px 0 3px;color:#9a9ab0;font-size:12px}
+  label{display:block;margin:10px 0 3px;color:#9a9ab0;font-size:12px;white-space:nowrap}
+  label span{display:inline-block;min-width:2.6em}   /* value readouts: no reflow when digits change */
   input{width:100%;box-sizing:border-box;background:#22222e;color:#eee;border:1px solid #3a3a52;border-radius:5px;padding:6px}
   #log{margin-top:12px;font:12px ui-monospace,monospace;white-space:pre-wrap;color:#9fd}
   #view{flex:1;position:relative}
@@ -21,7 +23,7 @@
   button:active:not(:disabled){transform:translateY(1px)}
   #edit{background:#2a3142;color:#cdd}
   .tog{display:flex;align-items:center;gap:9px;cursor:pointer;color:#9a9ab0;font-size:13px;margin-top:12px;user-select:none}
-  .tog input{position:absolute;opacity:0;pointer-events:none}
+  .tog input{position:absolute;opacity:0;pointer-events:none;width:0;height:0;margin:0;padding:0;border:0}
   .tog .sw{width:36px;height:20px;border-radius:11px;background:#3a3a52;position:relative;transition:.16s;flex-shrink:0}
   .tog .sw:after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:.16s}
   .tog input:checked + .sw{background:#1f7a3a} .tog input:checked + .sw:after{left:18px}
@@ -326,19 +328,26 @@ let renderer,scene,camera,controls,group,lastPreview=null,splitEdit=false;
 // decal keeps its true printed proud height (uC = baked offset above terrain, factored
 // out before scaling and re-added as uH after — for the route, uH is a live slider).
 const EX_UNI={value:1}, BASE_UNI={value:8}, ROUTE_H_UNI={value:1};
-// proud heights follow the ADVANCED params the current board was baked with (SPEC §2a)
+// proud heights: uC = value the mesh was BAKED with, uH = LIVE slider value.
+// Every height slider therefore moves its layer in realtime, like route height.
 let bakedAdv=null;
 const TURF_P={fairway:.5,tee:.6,green:.8,bunker:.6};
-function proudOf(name){
-  const a=bakedAdv||{}, H=a.heights||{};
+function calcProud(name,a){
+  const H=(a&&a.heights)||{};
   if(name in TURF_P) return TURF_P[name]*(H.turf!=null?H.turf:1);
   const base={road:.4,cartpath:.5,rail:.7,water:.15};
   if(name in base) return H[name]!=null?H[name]:base[name];
-  if(name==='outline') return a.outlineH!=null?a.outlineH:0.9;
-  if(name==='numbers') return a.numFlat?0:(a.numH!=null?a.numH:1.1);
+  if(name==='outline') return a&&a.outlineH!=null?a.outlineH:0.9;
+  if(name==='numbers') return a&&a.numFlat?0:(a&&a.numH!=null?a.numH:1.1);
   if(name==='start') return 1.4;
   return 0;                       // rough, plaque, title, numplate (flat)
 }
+function proudOf(name){ return calcProud(name,bakedAdv); }
+function liveProud(name){ return calcProud(name,advParams()); }
+const H_UNIS={};                  // shared live uniforms, one per layer name
+const LIVE_H=new Set(['road','cartpath','rail','water','fairway','tee','green','bunker','outline','numbers']);
+function huni(name){ if(!H_UNIS[name]) H_UNIS[name]={value:0}; return H_UNIS[name]; }
+function refreshLiveHeights(){ Object.keys(H_UNIS).forEach(n=>{ H_UNIS[n].value=liveProud(n); }); }
 function patchMat(m,c,hUni){ const uC={value:c||0}, uH=hUni||uC;
   m.onBeforeCompile=s=>{ s.uniforms.uK=EX_UNI; s.uniforms.uBase=BASE_UNI; s.uniforms.uC=uC; s.uniforms.uH=uH;
     s.vertexShader='uniform float uK;uniform float uBase;uniform float uC;uniform float uH;\n'
@@ -437,7 +446,10 @@ function showObjects(objs){
     geo.setIndex(new THREE.BufferAttribute(new Uint32Array(o.tris),1)); geo.computeVertexNormals();
     const mat=new THREE.MeshStandardMaterial({color:new THREE.Color(o.color),roughness:0.92,side:THREE.DoubleSide});
     const c=o.name==='route'?bakedRouteH:proudOf(o.name);
-    patchMat(mat,c,o.name==='route'?ROUTE_H_UNI:null);
+    let hu=null;
+    if(o.name==='route') hu=ROUTE_H_UNI;
+    else if(LIVE_H.has(o.name)){ hu=huni(o.name); hu.value=liveProud(o.name); }
+    patchMat(mat,c,hu);
     const mesh=new THREE.Mesh(geo,mat); mesh.name=o.name||''; g.add(mesh);});
   const box=new THREE.Box3().setFromObject(g),c=box.getCenter(new THREE.Vector3()); g.position.set(-c.x,-c.y,-c.z);
   const old=group; group=g; scene.add(g); if(old){scene.remove(old);old.traverse(o=>{if(o.geometry)o.geometry.dispose();});}
@@ -973,7 +985,7 @@ function advParams(){
  ['advHwater','advHwaterV',2],['advHturf','advHturfV',2],['advPsz','advPszV',2],['advOpad','advOpadV',0]
 ].forEach(([id,vid,dec])=>{ const el=document.getElementById(id);
   el.addEventListener('input',()=>{ document.getElementById(vid).textContent=parseFloat(el.value).toFixed(dec);
-    markDirty(); if(id==='advOpad'||id==='advCw') drawPlan(); }); });
+    markDirty(); refreshLiveHeights(); if(id==='advOpad'||id==='advCw') drawPlan(); }); });
 document.getElementById('advNflat').addEventListener('change',markDirty);
 function setAdvFromParams(p){
   const set=(id,vid,v,dec)=>{ if(v==null)return; document.getElementById(id).value=v;
