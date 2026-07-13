@@ -113,6 +113,43 @@
     <label>resolution: <span id="resv">high (0.35 mm)</span></label>
     <input type="range" id="res" min="0" max="3" step="1" value="2" style="width:100%">
     <div class="tip" id="reswarn" style="display:none;color:#ffb86b">ultra meshes take several minutes to build and make big downloads</div>
+    <details id="advbox" style="margin-top:12px">
+      <summary style="color:#9a9ab0;font-size:12px;cursor:pointer">advanced</summary>
+      <div data-golf="1">
+        <label>corridor width: <span id="advCwV">60</span> m</label>
+        <input type="range" id="advCw" min="30" max="120" step="5" value="60" style="width:100%">
+        <label>outline blobbiness: <span id="advBlobV">0.45</span></label>
+        <input type="range" id="advBlob" min="0" max="1" step="0.05" value="0.45" style="width:100%">
+        <label>outline height: <span id="advOlhV">0.9</span> mm</label>
+        <input type="range" id="advOlh" min="0.3" max="2" step="0.1" value="0.9" style="width:100%">
+        <label>number size: <span id="advNszV">9.0</span> mm</label>
+        <input type="range" id="advNsz" min="5" max="16" step="0.5" value="9" style="width:100%">
+        <label>number height: <span id="advNhV">1.1</span> mm</label>
+        <input type="range" id="advNh" min="0.4" max="2.5" step="0.1" value="1.1" style="width:100%">
+        <label class="feat" style="margin-top:8px"><input type="checkbox" id="advNflat"> flatten discs under numbers</label>
+        <label>turf height: <span id="advHturfV">1.00</span>×</label>
+        <input type="range" id="advHturf" min="0.25" max="2.5" step="0.05" value="1" style="width:100%">
+      </div>
+      <label>road height: <span id="advHroadV">0.4</span> mm</label>
+      <input type="range" id="advHroad" min="0.1" max="2.5" step="0.1" value="0.4" style="width:100%">
+      <label>trail/path height: <span id="advHcartV">0.5</span> mm</label>
+      <input type="range" id="advHcart" min="0.1" max="2.5" step="0.1" value="0.5" style="width:100%">
+      <label>rail height: <span id="advHrailV">0.7</span> mm</label>
+      <input type="range" id="advHrail" min="0.1" max="2.5" step="0.1" value="0.7" style="width:100%">
+      <label>water height: <span id="advHwaterV">0.15</span> mm</label>
+      <input type="range" id="advHwater" min="0" max="1" step="0.05" value="0.15" style="width:100%">
+      <label>plaque size: <span id="advPszV">1.00</span>×</label>
+      <input type="range" id="advPsz" min="0.6" max="1.8" step="0.05" value="1" style="width:100%">
+      <label>crop shape</label>
+      <div class="kinds" id="cropshapeRow">
+        <div class="kind on" data-c="rect" onclick="setCropShape('rect')">▭ rect</div>
+        <div class="kind" data-c="organic" onclick="setCropShape('organic')">🫧 organic</div>
+      </div>
+      <div id="orgpadrow" style="display:none">
+        <label>organic padding: <span id="advOpadV">8</span> mm</label>
+        <input type="range" id="advOpad" min="2" max="20" step="1" value="8" style="width:100%">
+      </div>
+    </details>
     <div class="tip" id="bakehint" style="display:none;color:#9fd">live preview — bakes in automatically when you download or publish</div>
   </div>
   <label class="tog"><input type="checkbox" id="spin" checked onchange="controls.autoRotate=this.checked"><span class="sw"></span> auto-rotate</label>
@@ -289,8 +326,19 @@ let renderer,scene,camera,controls,group,lastPreview=null,splitEdit=false;
 // decal keeps its true printed proud height (uC = baked offset above terrain, factored
 // out before scaling and re-added as uH after — for the route, uH is a live slider).
 const EX_UNI={value:1}, BASE_UNI={value:8}, ROUTE_H_UNI={value:1};
-const PROUD={rough:0,water:0.15,route:1.0,start:1.4,outline:0.9,numbers:1.1,
-             fairway:0.5,tee:0.6,green:0.8,bunker:0.6,road:0.4,rail:0.7,cartpath:0.5};
+// proud heights follow the ADVANCED params the current board was baked with (SPEC §2a)
+let bakedAdv=null;
+const TURF_P={fairway:.5,tee:.6,green:.8,bunker:.6};
+function proudOf(name){
+  const a=bakedAdv||{}, H=a.heights||{};
+  if(name in TURF_P) return TURF_P[name]*(H.turf!=null?H.turf:1);
+  const base={road:.4,cartpath:.5,rail:.7,water:.15};
+  if(name in base) return H[name]!=null?H[name]:base[name];
+  if(name==='outline') return a.outlineH!=null?a.outlineH:0.9;
+  if(name==='numbers') return a.numFlat?0:(a.numH!=null?a.numH:1.1);
+  if(name==='start') return 1.4;
+  return 0;                       // rough, plaque, title, numplate (flat)
+}
 function patchMat(m,c,hUni){ const uC={value:c||0}, uH=hUni||uC;
   m.onBeforeCompile=s=>{ s.uniforms.uK=EX_UNI; s.uniforms.uBase=BASE_UNI; s.uniforms.uC=uC; s.uniforms.uH=uH;
     s.vertexShader='uniform float uK;uniform float uBase;uniform float uC;uniform float uH;\n'
@@ -301,7 +349,8 @@ let bakedExag=4, bakedRouteH=1;
 // feature groups: checkbox -> instant mesh visibility + excluded from the next generate
 const FEATGROUPS=[
   {key:'turf',     label:'⛳ course turf',        objs:['fairway','tee','green','bunker'], golf:true},
-  {key:'marks',    label:'⛳ hole outlines + numbers', objs:['outline','numbers'], golf:true},
+  {key:'outline',  label:'⛳ hole outlines',      objs:['outline'], golf:true},
+  {key:'numbers',  label:'⛳ hole numbers',       objs:['numbers','numplate'], golf:true},
   {key:'road',     label:'🛣 roads',              objs:['road']},
   {key:'cartpath', label:'🥾 trails & paths',     objs:['cartpath']},
   {key:'rail',     label:'🚂 railways',           objs:['rail']},
@@ -309,8 +358,7 @@ const FEATGROUPS=[
   {key:'plaque',   label:'🏷 title plaque',       objs:['plaque','title']},
 ];
 const featOn={}; FEATGROUPS.forEach(g=>featOn[g.key]=true);
-function hideList(){ return FEATGROUPS.filter(g=>!featOn[g.key])
-  .flatMap(g=>g.key==='marks'?['marks']:g.objs); }
+function hideList(){ return FEATGROUPS.filter(g=>!featOn[g.key]).flatMap(g=>g.objs); }
 function applyVisibility(){ if(!group)return;
   const off=new Set(FEATGROUPS.filter(g=>!featOn[g.key]).flatMap(g=>g.objs));
   group.children.forEach(m=>{ if(m.name) m.visible=!off.has(m.name); }); }
@@ -322,7 +370,7 @@ function currentParams(){ return JSON.stringify({
   rw:MODE==='ride'?parseFloat(document.getElementById('rw').value):0,
   rh:MODE==='ride'?parseFloat(document.getElementById('rh').value):0,
   title:document.getElementById('btitle').value.trim(),
-  pos:plaquePos, hide:hideList()}); }
+  pos:plaquePos, hide:hideList(), adv:advParams()}); }
 // dirty = settings actually differ from the built board (touch-and-revert stays clean)
 function markDirty(){
   dirty=bakedParams!==null&&currentParams()!==bakedParams;
@@ -345,6 +393,7 @@ function buildFeatChecks(){
 }
 function syncLayerbox(){       // golf-only rows and the ribbon slider follow the mode
   document.querySelectorAll('#featchecks .feat').forEach(l=>{ l.style.display=(l.dataset.golf&&MODE==='ride')?'none':'flex'; });
+  document.querySelectorAll('#advbox [data-golf]').forEach(el=>{ el.style.display=MODE==='ride'?'none':'block'; });
   document.getElementById('ribbonrow').style.display=MODE==='ride'?'block':'none';
 }
 function resize3D(frac){ const el=document.getElementById('view');
@@ -387,7 +436,7 @@ function showObjects(objs){
     geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(o.verts),3));
     geo.setIndex(new THREE.BufferAttribute(new Uint32Array(o.tris),1)); geo.computeVertexNormals();
     const mat=new THREE.MeshStandardMaterial({color:new THREE.Color(o.color),roughness:0.92,side:THREE.DoubleSide});
-    const c=o.name==='route'?bakedRouteH:(PROUD[o.name]!=null?PROUD[o.name]:0);
+    const c=o.name==='route'?bakedRouteH:proudOf(o.name);
     patchMat(mat,c,o.name==='route'?ROUTE_H_UNI:null);
     const mesh=new THREE.Mesh(geo,mat); mesh.name=o.name||''; g.add(mesh);});
   const box=new THREE.Box3().setFromObject(g),c=box.getCenter(new THREE.Vector3()); g.position.set(-c.x,-c.y,-c.z);
@@ -583,6 +632,26 @@ function drawPlan(){
       px.fillStyle='#e0444a'; px.beginPath(); px.arc(q[0]+10,q[1]-10,6,0,7); px.fill();
       px.fillStyle='#fff'; px.font='bold 10px sans-serif'; px.fillText('✕',q[0]+10,q[1]-10); px.font='bold 11px sans-serif'; });
   }
+  // organic crop: translucent footprint of the plate the bake will produce
+  if(cropShape==='organic'&&cropLL){
+    const cropWm=(cropLL[2]-cropLL[0])*mPerLon, cropHm=(cropLL[3]-cropLL[1])*mPerLat;
+    const mm2m=Math.max(cropWm,cropHm)/255;                        // board mm -> ground metres
+    const gpx=m=>m/Math.cos(((VP[1]+VP[3])/2)*Math.PI/180)*scaleM; // ground metres -> screen px
+    const padPx=gpx(parseFloat(document.getElementById('advOpad').value)*mm2m);
+    px.save(); px.globalAlpha=0.16; px.fillStyle='#fff'; px.strokeStyle='#fff'; px.lineJoin='round'; px.lineCap='round';
+    if(MODE==='ride'&&routePts&&routePts.length>1){
+      px.lineWidth=gpx(parseFloat(document.getElementById('rw').value)*mm2m)+2*padPx;
+      px.beginPath(); routePts.forEach((p,i)=>{const q=ll2px(p[0],p[1]); i?px.lineTo(q[0],q[1]):px.moveTo(q[0],q[1]);}); px.stroke();
+    }else{
+      px.lineWidth=gpx(parseFloat(document.getElementById('advCw').value))+2*padPx;
+      labels.forEach(L=>{ if(L.del||!L.pts||L.pts.length<2) return; px.beginPath();
+        L.pts.forEach((p,i)=>{const q=ll2px(p[0],p[1]); i?px.lineTo(q[0],q[1]):px.moveTo(q[0],q[1]);}); px.stroke(); });
+      ['fairway','tee','green','bunker'].forEach(k=>{ (feats[k]||[]).forEach(wy=>{ if(wy.length<3)return;
+        px.beginPath(); wy.forEach((p,i)=>{const q=ll2px(p[0],p[1]); i?px.lineTo(q[0],q[1]):px.moveTo(q[0],q[1]);});
+        px.closePath(); px.fill(); px.lineWidth=2*padPx; px.stroke(); }); });
+    }
+    px.restore();
+  }
   // crop box: dim outside
   const a=ll2px(cropLL[0],cropLL[3]), b=ll2px(cropLL[2],cropLL[1]); const x0=a[0],y0=a[1],x1=b[0],y1=b[1];
   px.fillStyle='rgba(8,10,14,0.55)'; px.fillRect(0,0,plan.width,y0); px.fillRect(0,y1,plan.width,plan.height-y1); px.fillRect(0,y0,x0,y1-y0); px.fillRect(x1,y0,plan.width-x1,y1-y0);
@@ -736,9 +805,10 @@ function regenerate(){
   msg.subtitle=MODE==='ride'&&routePts?routeKm(routePts).toFixed(1)+' km':(lastPlace.split(',').slice(1,3).join(',').trim());
   msg.pitch=RESVALS[+document.getElementById('res').value];
   msg.plaquePos=plaquePos;
+  Object.assign(msg,advParams());
   if(MODE==='ride'&&routePts){ msg.route=routePts; msg.kind=rideKind; msg.holes=[];
     msg.routeW=parseFloat(document.getElementById('rw').value); msg.routeH=parseFloat(document.getElementById('rh').value); }
-  bakedExag=ex; bakedRouteH=msg.routeH||1; pendingBaked=currentParams();
+  bakedExag=ex; bakedRouteH=msg.routeH||1; bakedAdv=advParams(); pendingBaked=currentParams();
   pbar(3);
   worker.postMessage(msg);
 }
@@ -849,6 +919,7 @@ async function publish(){
   prms.subtitle=MODE==='ride'&&routePts?routeKm(routePts).toFixed(1)+' km':(lastPlace.split(',').slice(1,3).join(',').trim());
   prms.pitch=RESVALS[+document.getElementById('res').value];
   prms.plaquePos=plaquePos;
+  Object.assign(prms,advParams());
   const hid=hideList(); if(hid.length) prms.hide=hid;
   try{ const r=await (await fetch('/api/designs',{method:'POST',body:JSON.stringify({type:kind,name,place:lastPlace,bbox:cropLL,params:prms,handle,thumb:tc.toDataURL('image/png')})})).json();
     if(r.id){ if(lastPreview) await fetch('/api/designs/'+r.id+'/mesh',{method:'POST',body:lastPreview}); setStatus('✓ published — <a href="/">view in gallery</a>','#7CFC9A'); }
@@ -884,6 +955,39 @@ document.getElementById('rw').addEventListener('input',()=>{
       worker.postMessage({type:'route',routeW:parseFloat(document.getElementById('rw').value),routeH:parseFloat(document.getElementById('rh').value)});
   },250);
 });
+// ---- advanced params (SPEC.md §2a) ----
+let cropShape='rect';
+function setCropShape(c){ cropShape=c==='organic'?'organic':'rect';
+  document.querySelectorAll('#cropshapeRow .kind').forEach(x=>x.classList.toggle('on',x.dataset.c===cropShape));
+  document.getElementById('orgpadrow').style.display=cropShape==='organic'?'block':'none';
+  markDirty(); drawPlan(); }
+function advParams(){
+  const g=id=>parseFloat(document.getElementById(id).value);
+  return { heights:{road:g('advHroad'),cartpath:g('advHcart'),rail:g('advHrail'),water:g('advHwater'),turf:g('advHturf')},
+    outlineBlob:g('advBlob'), corridorW:g('advCw'), outlineH:g('advOlh'),
+    numSize:g('advNsz'), numH:g('advNh'), numFlat:document.getElementById('advNflat').checked,
+    plaqueSize:g('advPsz'), cropShape, organicPad:g('advOpad') };
+}
+[['advCw','advCwV',0],['advBlob','advBlobV',2],['advOlh','advOlhV',1],['advNsz','advNszV',1],
+ ['advNh','advNhV',1],['advHroad','advHroadV',1],['advHcart','advHcartV',1],['advHrail','advHrailV',1],
+ ['advHwater','advHwaterV',2],['advHturf','advHturfV',2],['advPsz','advPszV',2],['advOpad','advOpadV',0]
+].forEach(([id,vid,dec])=>{ const el=document.getElementById(id);
+  el.addEventListener('input',()=>{ document.getElementById(vid).textContent=parseFloat(el.value).toFixed(dec);
+    markDirty(); if(id==='advOpad'||id==='advCw') drawPlan(); }); });
+document.getElementById('advNflat').addEventListener('change',markDirty);
+function setAdvFromParams(p){
+  const set=(id,vid,v,dec)=>{ if(v==null)return; document.getElementById(id).value=v;
+    document.getElementById(vid).textContent=(+v).toFixed(dec); };
+  if(p.heights){ set('advHroad','advHroadV',p.heights.road,1); set('advHcart','advHcartV',p.heights.cartpath,1);
+    set('advHrail','advHrailV',p.heights.rail,1); set('advHwater','advHwaterV',p.heights.water,2);
+    set('advHturf','advHturfV',p.heights.turf,2); }
+  set('advBlob','advBlobV',p.outlineBlob,2); set('advCw','advCwV',p.corridorW,0); set('advOlh','advOlhV',p.outlineH,1);
+  set('advNsz','advNszV',p.numSize,1); set('advNh','advNhV',p.numH,1);
+  if(p.numFlat!=null) document.getElementById('advNflat').checked=!!p.numFlat;
+  set('advPsz','advPszV',p.plaqueSize,2); set('advOpad','advOpadV',p.organicPad,0);
+  if(p.cropShape) setCropShape(p.cropShape);
+}
+
 const RESVALS=[0.7,0.5,0.35,0.25], RESNAMES=['draft','standard','high','ultra'];
 document.getElementById('res').addEventListener('input',()=>{
   const i=+document.getElementById('res').value;
@@ -928,10 +1032,12 @@ setStatus('<span class="spin"></span>loading engine…','#9fd');
     if(d.params&&d.params.routeH){document.getElementById('rh').value=d.params.routeH;document.getElementById('rhv').textContent=(+d.params.routeH).toFixed(1);ROUTE_H_UNI.value=+d.params.routeH;}
     if(d.params&&d.params.title!=null) document.getElementById('btitle').value=d.params.title;
     if(d.params&&d.params.plaquePos) setPlaquePos(d.params.plaquePos);
+    if(d.params) setAdvFromParams(d.params);
     if(d.params&&d.params.pitch){ const ri=RESVALS.indexOf(+d.params.pitch); if(ri>=0){document.getElementById('res').value=ri;document.getElementById('resv').textContent=RESNAMES[ri]+' ('+RESVALS[ri]+' mm)';} }
     if(d.params&&d.params.hide){ const hid=new Set(d.params.hide);
-      FEATGROUPS.forEach(g=>{ const key=g.key==='marks'?'marks':g.objs[0];
-        if(hid.has(key)||g.objs.some(o=>hid.has(o))) featOn[g.key]=false; });
+      FEATGROUPS.forEach(g=>{
+        const legacy=(g.key==='outline'||g.key==='numbers')&&hid.has('marks');   // old recipes
+        if(legacy||g.objs.some(o=>hid.has(o))) featOn[g.key]=false; });
       buildFeatChecks(); }
     if(d.params&&d.params.route){ routePts=d.params.route; setMode('ride'); setKind(d.params.kind||d.type||'bike');
       if(d.params.wpts&&d.params.wpts.length){ wayPts=d.params.wpts; drawMode=true; cropTouched=true; updateDrawInfo(); }

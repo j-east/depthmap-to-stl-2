@@ -50,7 +50,7 @@ UI control  →  generate msg  →  worker.js  →  golf_board() kwarg  →  rec
 | waypoints (drawn) | map clicks | — | — | `wpts` | n/a | — |
 | crop bbox | crop box in edit step | `bbox` | `bbox` | design `bbox` | no | golf 1.5× guess / ride 1.25× track |
 
-### 2a. PLANNED — Advanced section (spec, to implement)
+### 2a. Advanced section (IMPLEMENTED 2026-07-12)
 
 All of the following live in a collapsed **"advanced"** `<details>` section of the
 layerbox. All are recipe params and follow the §1 checklist. All bake on
@@ -58,21 +58,21 @@ regenerate/download/publish (none are live unless stated).
 
 | Param | Control | msg / kwarg / recipe key | Range | Default | Notes |
 |---|---|---|---|---|---|
-| element heights | per-group sliders | `heights` / `heights_json` / `heights` | 0.1–2.5 mm | per LAYERS | proud height per feature group: roads, trails, rail, turf (fairway/tee/green/bunker scale together), water |
+| element heights | per-group sliders | `heights` / `heights_json` / `heights` | 0.1–2.5 mm (turf: 0.25–2.5×) | road .4 · trail .5 · rail .7 · water .15 · turf 1.0× | proud height per group; turf is a MULTIPLIER on the four turf defaults (fairway .5/tee .6/green .8/bunker .6) |
 | outline blobbiness | slider | `outlineBlob` / `outline_blob` / `outlineBlob` | 0–1 | 0.45 | maps to gaussian blur radius = corridor_width × (0.08 + 0.32×blob); 0 ≈ crisp union, 1 ≈ very organic |
 | corridor width | slider | `corridorW` / `corridor_w` / `corridorW` | 30–120 m | 60 | hole corridor stroke width (feeds the outline union) |
 | hole number size | slider | `numSize` / `num_size` / `numSize` | 5–16 mm | 9 | font size on board |
 | hole number height | slider | `numH` / `num_h` / `numH` | 0.4–2.5 mm | 1.1 | proud height of digits |
-| number flatten | toggle | `numFlat` / `num_flat` / `numFlat` | on/off | off | digits sit on a small flattened disc (legibility on steep terrain) |
+| number flatten | toggle | `numFlat` / `num_flat` / `numFlat` | on/off | off | digits sit on per-label flattened discs (`numplate` mesh, local-max level +0.5) |
 | outline height | slider | `outlineH` / `outline_h` / `outlineH` | 0.3–2 mm | 0.9 | proud height of the corridor ring |
 | plaque size | slider | `plaqueSize` / `plaque_size` / `plaqueSize` | 0.6–1.8× | 1.0 | scales plaque font sizes + padding together |
 | crop shape | toggle rect/organic | `cropShape` + `organicPad` / `crop_shape`,`organic_pad_mm` / same | rect·organic; pad 2–20 mm | rect | see §6 |
 
-### 2b. PLANNED — feature-group split
+### 2b. Feature-group split (IMPLEMENTED)
 
 `marks` (outline + numbers together) splits into **two independent groups**:
 - `outline` — hole corridor rings (objs: `outline`)
-- `numbers` — hole digits (objs: `numbers`)
+- `numbers` — hole digits (objs: `numbers`, `numplate`)
 
 Both toggleable independently, both in `hide`, both instant-visibility + baked exclusion.
 Recipes with legacy `hide:["marks"]` must be interpreted as hiding both.
@@ -177,7 +177,7 @@ Hard-won behaviors. **Do not undo these.**
     wiped by cssText assignment).
 12. Preview/gallery mesh is packed at 0.5 mm pitch regardless of the print pitch.
 
-## 6. PLANNED — organic crops (spec)
+## 6. Organic crops (IMPLEMENTED 2026-07-12)
 
 **Goal:** the board doesn't have to be rectangular. `crop_shape: "organic"` derives the
 base plate outline from the content:
@@ -194,7 +194,7 @@ base plate outline from the content:
 - `bbox` stays rectangular in the recipe (it's the fetch window); the mask is derived,
   not stored.
 - UI: rect/organic toggle + pad slider in the advanced section; the edit-step canvas
-  previews the organic boundary as a dashed line over the map.
+  previews the footprint as a translucent white overlay (strokes/fills at padded widths).
 - 3MF: nothing special — the mesher already handles arbitrary masks.
 
 **Non-goals (v1):** custom drawn crop shapes; multiple disjoint islands are ALLOWED if
@@ -225,3 +225,7 @@ the content is disjoint (mesher handles it; print slicers are fine with it).
 - [ ] Grep for the param's msg key across golf.html, worker.js, viewer.html
 - [ ] Positional args in the worker's Python call strings match golf_board's signature
 - [ ] Smoke-test board_lib with a synthetic DEM if the mesh path changed
+
+**Implementation note:** advanced params are passed to Python as **keyword args** in the
+worker's call string (the positional list is frozen at `plaque_pos`). The plaque plate is
+unioned into an organic base so it always has material under it.

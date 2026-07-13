@@ -157,8 +157,14 @@ onmessage = async (ev)=>{
     pyodide.globals.set('hide_json',JSON.stringify(hide));
     pyodide.globals.set('title_s',(m.title||'').toString());
     pyodide.globals.set('subtitle_s',(m.subtitle||'').toString());
+    pyodide.globals.set('heights_json',JSON.stringify(m.heights||{}));
     const finePitch=+m.pitch?+m.pitch:'None';
-    const call=p=>`golf_board(dem_merged,dem_merged.shape[0],dem_merged.shape[1],[${w},${s},${e},${n}],feats_json,${m.exag},8.0,holes_json,font_bytes,${p},route_json,'${kind}',hide_json,${routeW},${routeH},title_s,subtitle_s,'${m.plaquePos||'bl'}')`;
+    // advanced params ride as Python kwargs (SPEC.md §2a) — positional list stays frozen
+    const adv=`heights_json=heights_json,outline_blob=${+m.outlineBlob||0.45},corridor_w=${+m.corridorW||60}`
+      +`,outline_h=${+m.outlineH||0.9},num_size=${+m.numSize||9},num_h=${+m.numH||1.1}`
+      +`,num_flat=${m.numFlat?'True':'False'},plaque_size=${+m.plaqueSize||1}`
+      +`,crop_shape='${m.cropShape==='organic'?'organic':'rect'}',organic_pad_mm=${+m.organicPad||8}`;
+    const call=p=>`golf_board(dem_merged,dem_merged.shape[0],dem_merged.shape[1],[${w},${s},${e},${n}],feats_json,${m.exag},8.0,holes_json,font_bytes,${p},route_json,'${kind}',hide_json,${routeW},${routeH},title_s,subtitle_s,'${m.plaquePos||'bl'}',${adv})`;
     postMessage({type:'progress',msg:'meshing the board…',pct:35});
     const res=pyodide.runPython(call(finePitch));
     const out=res.toJs(); res.destroy();
