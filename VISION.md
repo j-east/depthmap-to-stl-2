@@ -71,3 +71,15 @@ not access:
 Funnel metrics to wire early: generates → publishes → order-clicks → checkouts.
 The "resolution" slider in the free tool intentionally tops out below what the paid
 print uses — free hi-fi exists (slow, in-browser), paid is *finer + reviewed + resin*.
+
+
+## Status (2026-07-13)
+
+The designer is feature-complete for golf + rides: client-side Pyodide engine
+(3DEP+NOAA merged DEM, Overpass, tile-basemap editor), live parameter system
+(exaggeration, base thickness, all element heights via GPU uniforms; route
+ribbon + outline/numbers via targeted remesh), organic crops with auto-placed
+plaques, per-course hole separation, accounts gating downloads/publish (Google
+sign-in ready behind GOOGLE_CLIENT_ID), rate-limited public API, Postgres
+gallery, cinematic homepage. SPEC.md is the behavioral contract. Next fronts:
+Shopify ordering (PRD pending), data/ volume persistence, more model types.

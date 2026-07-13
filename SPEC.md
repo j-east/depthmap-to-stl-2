@@ -5,7 +5,7 @@ survive refactors.** If something is intentionally removed or changed, this file
 updated in the same commit — a diff that changes behavior without touching SPEC.md is a
 regression by definition.
 
-Last major revision: 2026-07-13.
+Last major revision: 2026-07-13 (advanced params, organic crops, live remesh, base thickness).
 
 ---
 
@@ -37,6 +37,7 @@ UI control  →  generate msg  →  worker.js  →  golf_board() kwarg  →  rec
 | Param | UI control | msg key | golf_board kwarg | recipe key | live (no rebake)? | default |
 |---|---|---|---|---|---|---|
 | vertical exaggeration | slider `#ex` (1–8, .5) | `exag` | `exag` | `exag` | yes — GPU uniform `uK` | 4.0 |
+| base thickness | slider `#bh` (4–20, .5) | `baseH` | `base_mm` | `baseH` | yes — GPU uniform `uB1` | 8.0 |
 | resolution / pitch | slider `#res` (draft .7 / std .5 / high .35 / ultra .25) | `pitch` | `pitch` | `pitch` | no | high (0.35) |
 | hidden features | checkboxes `#featchecks` | `hide[]` | `hide_json` | `hide` | visibility yes; 3MF no | all on |
 | route thickness | slider `#rw` (1.2–5 mm) | `routeW` | `route_w` | `routeW` | yes — ribbon-only remesh | 2.4 |
@@ -166,7 +167,8 @@ Hard-won behaviors. **Do not undo these.**
    turf edges, `& lbl==0`.
 5. **3MF is streamed** into the zip in 250k-row chunks — never build the whole XML
    string (WASM OOM at ultra).
-6. **Live exaggeration shader:** `z' = uBase + (z−uBase−uC)·uK + uH` for z>0; uC = baked
+6. **Live shader:** `z' = uB1 + (z−uBase−uC)·uK + uH` for z>0 (uBase = baked base,
+   uB1 = live base-thickness slider); uC = baked
    proud height per mesh (PROUD table), so decals keep true printed height while terrain
    scales. Route mesh uses `ROUTE_H_UNI` as uH.
 7. **Overpass:** 5 mirrors × 3 backoff rounds. **Nominatim:** 1 req/s (debounce ≥1 s).

@@ -120,7 +120,7 @@ onmessage = async (ev)=>{
     if(!lastGen) return;
     try{
       const [w,s,e,n]=lastGen.bbox;
-      const res=pyodide.runPython(`route_layer(dem_merged,dem_merged.shape[0],dem_merged.shape[1],[${w},${s},${e},${n}],${lastGen.exag},8.0,route_json,${+m.routeW||2.4},${+m.routeH||1},${lastGen.pitch||'None'})`);
+      const res=pyodide.runPython(`route_layer(dem_merged,dem_merged.shape[0],dem_merged.shape[1],[${w},${s},${e},${n}],${lastGen.exag},${lastGen.baseH||8},route_json,${+m.routeW||2.4},${+m.routeH||1},${lastGen.pitch||'None'})`);
       const out=res.toJs(); res.destroy();
       const verts=out.get('verts').buffer, tris=out.get('tris').buffer;
       postMessage({type:'route', verts, tris, routeH:+m.routeH||1}, [verts,tris]);
@@ -132,7 +132,7 @@ onmessage = async (ev)=>{
     if(!lastGen) return;
     try{
       const [w,s,e,n]=lastGen.bbox;
-      const res=pyodide.runPython(`marks_layer(dem_merged,dem_merged.shape[0],dem_merged.shape[1],[${w},${s},${e},${n}],${lastGen.exag},8.0,feats_json,holes_json,font_bytes,${lastGen.pitch||'None'},corridor_w=${+m.corridorW||60},outline_blob=${+m.outlineBlob||0.45},outline_h=${+m.outlineH||0.9},num_size=${+m.numSize||9},num_h=${+m.numH||1.1},num_flat=${m.numFlat?'True':'False'},outline_mode='${m.outlineMode==='holes'?'holes':'union'}')`);
+      const res=pyodide.runPython(`marks_layer(dem_merged,dem_merged.shape[0],dem_merged.shape[1],[${w},${s},${e},${n}],${lastGen.exag},${lastGen.baseH||8},feats_json,holes_json,font_bytes,${lastGen.pitch||'None'},corridor_w=${+m.corridorW||60},outline_blob=${+m.outlineBlob||0.45},outline_h=${+m.outlineH||0.9},num_size=${+m.numSize||9},num_h=${+m.numH||1.1},num_flat=${m.numFlat?'True':'False'},outline_mode='${m.outlineMode==='holes'?'holes':'union'}')`);
       const out=res.toJs(); res.destroy();
       const objects=out.get('objects').map(o=>({name:o.get('name'),color:o.get('color'),
         verts:o.get('verts').buffer,tris:o.get('tris').buffer}));
@@ -191,7 +191,7 @@ onmessage = async (ev)=>{
       +`,num_flat=${m.numFlat?'True':'False'},plaque_size=${+m.plaqueSize||1}`
       +`,crop_shape='${m.cropShape==='organic'?'organic':'rect'}',organic_pad_mm=${+m.organicPad||8}`
       +`,outline_mode='${m.outlineMode==='holes'?'holes':'union'}'`;
-    const call=p=>`golf_board(dem_merged,dem_merged.shape[0],dem_merged.shape[1],[${w},${s},${e},${n}],feats_json,${m.exag},8.0,holes_json,font_bytes,${p},route_json,'${kind}',hide_json,${routeW},${routeH},title_s,subtitle_s,'${m.plaquePos||'bl'}',${adv})`;
+    const call=p=>`golf_board(dem_merged,dem_merged.shape[0],dem_merged.shape[1],[${w},${s},${e},${n}],feats_json,${m.exag},${+m.baseH||8},holes_json,font_bytes,${p},route_json,'${kind}',hide_json,${routeW},${routeH},title_s,subtitle_s,'${m.plaquePos||'bl'}',${adv})`;
     postMessage({type:'progress',msg:'meshing the board…',pct:35});
     const res=pyodide.runPython(call(finePitch));
     const out=res.toJs(); res.destroy();
@@ -204,7 +204,7 @@ onmessage = async (ev)=>{
     const pres=pyodide.runPython(call('0.5'));
     const pout=pres.toJs(); pres.destroy();
     const preview=packMesh(pout.get('objects'));
-    lastGen={bbox:m.bbox, exag:m.exag, pitch:(+m.pitch||null)};
+    lastGen={bbox:m.bbox, exag:m.exag, pitch:(+m.pitch||null), baseH:(+m.baseH||8)};
     const transfer=objects.flatMap(o=>[o.verts,o.tris]); transfer.push(tmf, preview);
     postMessage({type:'done', objects, tmf, preview, board:out.get('board'),
                  buildMs:Date.now()-t1}, transfer);

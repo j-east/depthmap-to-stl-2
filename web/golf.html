@@ -114,6 +114,8 @@
     </div>
     <label>vertical exaggeration: <span id="exv">4.0</span>×</label>
     <input type="range" id="ex" min="1" max="8" step="0.5" value="4" style="width:100%">
+    <label>base thickness: <span id="bhv">8.0</span> mm</label>
+    <input type="range" id="bh" min="4" max="20" step="0.5" value="8" style="width:100%">
     <label>resolution: <span id="resv">high (0.35 mm)</span></label>
     <input type="range" id="res" min="0" max="3" step="1" value="2" style="width:100%">
     <div class="tip" id="reswarn" style="display:none;color:#ffb86b">ultra meshes take several minutes to build and make big downloads</div>
@@ -337,7 +339,7 @@ let renderer,scene,camera,controls,group,lastPreview=null,splitEdit=false;
 // live vertical exaggeration: GPU rescales TERRAIN above the base plate while each
 // decal keeps its true printed proud height (uC = baked offset above terrain, factored
 // out before scaling and re-added as uH after — for the route, uH is a live slider).
-const EX_UNI={value:1}, BASE_UNI={value:8}, ROUTE_H_UNI={value:1};
+const EX_UNI={value:1}, BASE_UNI={value:8}, BASE_LIVE={value:8}, ROUTE_H_UNI={value:1};
 // proud heights: uC = value the mesh was BAKED with, uH = LIVE slider value.
 // Every height slider therefore moves its layer in realtime, like route height.
 let bakedAdv=null;
@@ -359,10 +361,11 @@ const LIVE_H=new Set(['road','cartpath','rail','water','fairway','tee','green','
 function huni(name){ if(!H_UNIS[name]) H_UNIS[name]={value:0}; return H_UNIS[name]; }
 function refreshLiveHeights(){ Object.keys(H_UNIS).forEach(n=>{ H_UNIS[n].value=liveProud(n); }); }
 function patchMat(m,c,hUni){ const uC={value:c||0}, uH=hUni||uC;
-  m.onBeforeCompile=s=>{ s.uniforms.uK=EX_UNI; s.uniforms.uBase=BASE_UNI; s.uniforms.uC=uC; s.uniforms.uH=uH;
-    s.vertexShader='uniform float uK;uniform float uBase;uniform float uC;uniform float uH;\n'
+  m.onBeforeCompile=s=>{ s.uniforms.uK=EX_UNI; s.uniforms.uBase=BASE_UNI; s.uniforms.uB1=BASE_LIVE;
+    s.uniforms.uC=uC; s.uniforms.uH=uH;
+    s.vertexShader='uniform float uK;uniform float uBase;uniform float uB1;uniform float uC;uniform float uH;\n'
       +s.vertexShader.replace('#include <begin_vertex>',
-      '#include <begin_vertex>\nif(transformed.z>0.001){transformed.z=uBase+(transformed.z-uBase-uC)*uK+uH;}'); };
+      '#include <begin_vertex>\nif(transformed.z>0.001){transformed.z=uB1+(transformed.z-uBase-uC)*uK+uH;}'); };
   m.customProgramCacheKey=()=>'tmproud'; }
 let bakedExag=4, bakedRouteH=1;
 // feature groups: checkbox -> instant mesh visibility + excluded from the next generate
@@ -385,6 +388,7 @@ let dirty=false, pendingAction=null;   // 'download' | 'publish' — resumes aft
 let bakedParams=null, pendingBaked=null;   // settings the current board was built with
 function currentParams(){ return JSON.stringify({
   exag:parseFloat(document.getElementById('ex').value),
+  baseH:parseFloat(document.getElementById('bh').value),
   pitch:RESVALS[+document.getElementById('res').value],
   rw:MODE==='ride'?parseFloat(document.getElementById('rw').value):0,
   rh:MODE==='ride'?parseFloat(document.getElementById('rh').value):0,
@@ -830,6 +834,8 @@ function regenerate(){
   gb.disabled=true; gb.innerHTML='<span class="spin"></span> Generating…';
   setStatus('<span class="spin"></span>building…','#9fd'); tStart=performance.now();
   const msg={type:'generate',bbox:cropLL,exag:ex,holes,hide:hideList()};
+  msg.baseH=parseFloat(document.getElementById('bh').value);
+  BASE_UNI.value=msg.baseH; BASE_LIVE.value=msg.baseH;
   msg.title=document.getElementById('btitle').value.trim();
   msg.subtitle=MODE==='ride'&&routePts?routeKm(routePts).toFixed(1)+' km':(lastPlace.split(',').slice(1,3).join(',').trim());
   msg.pitch=RESVALS[+document.getElementById('res').value];
@@ -947,6 +953,7 @@ async function publish(){
   prms.title=document.getElementById('btitle').value.trim();
   prms.subtitle=MODE==='ride'&&routePts?routeKm(routePts).toFixed(1)+' km':(lastPlace.split(',').slice(1,3).join(',').trim());
   prms.pitch=RESVALS[+document.getElementById('res').value];
+  prms.baseH=parseFloat(document.getElementById('bh').value);
   prms.plaquePos=plaquePos;
   Object.assign(prms,advParams());
   const hid=hideList(); if(hid.length) prms.hide=hid;
@@ -961,6 +968,12 @@ document.getElementById('ex').addEventListener('input',()=>{
   const v=parseFloat(document.getElementById('ex').value);
   document.getElementById('exv').textContent=v.toFixed(1);
   if(group) EX_UNI.value=v/bakedExag;
+  markDirty();
+});
+document.getElementById('bh').addEventListener('input',()=>{   // live: the plate thickens in place
+  const v=parseFloat(document.getElementById('bh').value);
+  document.getElementById('bhv').textContent=v.toFixed(1);
+  BASE_LIVE.value=v;
   markDirty();
 });
 function swapRouteMesh(m){        // hot-swap just the ribbon mesh (live thickness preview)
@@ -1095,6 +1108,8 @@ setStatus('<span class="spin"></span>loading engine…','#9fd');
     if(d.params&&d.params.routeW){document.getElementById('rw').value=d.params.routeW;document.getElementById('rwv').textContent=(+d.params.routeW).toFixed(1);}
     if(d.params&&d.params.routeH){document.getElementById('rh').value=d.params.routeH;document.getElementById('rhv').textContent=(+d.params.routeH).toFixed(1);ROUTE_H_UNI.value=+d.params.routeH;}
     if(d.params&&d.params.title!=null) document.getElementById('btitle').value=d.params.title;
+    if(d.params&&d.params.baseH){document.getElementById('bh').value=d.params.baseH;
+      document.getElementById('bhv').textContent=(+d.params.baseH).toFixed(1);}
     if(d.params&&d.params.plaquePos) setPlaquePos(d.params.plaquePos);
     if(d.params) setAdvFromParams(d.params);
     if(d.params&&d.params.pitch){ const ri=RESVALS.indexOf(+d.params.pitch); if(ri>=0){document.getElementById('res').value=ri;document.getElementById('resv').textContent=RESNAMES[ri]+' ('+RESVALS[ri]+' mm)';} }
