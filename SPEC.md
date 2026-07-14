@@ -88,7 +88,10 @@ Anything here that disappears without a SPEC.md edit is a bug.
 - Mode tabs: `⛳ Golf course` / `🚵 Ride loop` — switching carries the search text across
   and auto-searches in the target mode
 - Golf panel: search input (Enter + 1 s debounced autosearch, ≥3 chars, dedup),
-  results list, `advanced: bbox` disclosure with manual W,S,E,N entry
+  results list, `advanced: bbox` disclosure with manual W,S,E,N entry. Course search
+  expands suffix variants (golf club / golf course / country club / golf and country
+  club) against Nominatim at 1 req/s and merges deduped golf_course results — OSM
+  names clubs inconsistently (e.g. 'X Golf Club' mapped as 'X Country Club')
 - Ride panel: kind chips (🚴 bike / 🏍 moto / 🚗 drive — re-routes drawn routes on switch),
   waypoint search (same debounce), draw tools (↩ Undo, ✕ Clear,
   `⟲ Close the loop` button when route is open), "— or —" divider, GPX upload

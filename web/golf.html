@@ -473,9 +473,22 @@ function showObjects(objs){
 // ---------- course search (Nominatim) ----------
 async function nominatim(q){ const r=await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=20&namedetails=1&q='+encodeURIComponent(q),{headers:{'Accept':'application/json'}}); if(!r.ok)throw new Error('Nominatim '+r.status); return r.json(); }
 async function searchCourses(name){
-  let arr=await nominatim(name), golf=arr.filter(x=>x.type==='golf_course');
-  if(!golf.length && !/golf/i.test(name)){ arr=await nominatim(name+' golf course'); golf=arr.filter(x=>x.type==='golf_course'); }
-  return (golf.length?golf:arr).map(x=>{const bb=x.boundingbox.map(Number);
+  // OSM naming is loose: a "X Golf Club" is often mapped as "X Country Club" or
+  // "X Golf Course" — try suffix variants until we have a few golf hits (SPEC §3)
+  const seen=new Set(), golf=[]; let raw=[];
+  const collect=arr=>arr.forEach(x=>{ if(x.type!=='golf_course') return;
+    const k=(x.osm_type||'')+(x.osm_id||x.display_name); if(seen.has(k)) return;
+    seen.add(k); golf.push(x); });
+  const base=name.replace(/\s+(golf\s+(?:and\s+country\s+)?club|golf\s+course|golf\s+links|country\s+club|golf|club)\s*$/i,'').trim();
+  const variants=[name];
+  if(base&&base.toLowerCase()!==name.toLowerCase())
+    variants.push(base+' golf course', base+' country club', base+' golf club', base+' golf and country club');
+  else if(!/golf/i.test(name)) variants.push(name+' golf course');
+  for(let i=0;i<variants.length;i++){
+    if(i) await new Promise(r=>setTimeout(r,1100));      // Nominatim policy: 1 req/s
+    try{ const arr=await nominatim(variants[i]); if(!raw.length) raw=arr; collect(arr); }catch(e){}
+  }
+  return (golf.length?golf:raw).map(x=>{const bb=x.boundingbox.map(Number);
     return {name:(x.namedetails&&x.namedetails.name)||x.display_name.split(',')[0],full:x.display_name,isGolf:x.type==='golf_course',b:{minlat:bb[0],maxlat:bb[1],minlon:bb[2],maxlon:bb[3]}};});
 }
 async function doSearch(){
