@@ -89,9 +89,11 @@ Anything here that disappears without a SPEC.md edit is a bug.
   and auto-searches in the target mode
 - Golf panel: search input (Enter + 1 s debounced autosearch, ≥3 chars, dedup),
   results list, `advanced: bbox` disclosure with manual W,S,E,N entry. Course search
-  expands suffix variants (golf club / golf course / country club / golf and country
-  club) against Nominatim at 1 req/s and merges deduped golf_course results — OSM
-  names clubs inconsistently (e.g. 'X Golf Club' mapped as 'X Country Club')
+  uses PHOTON (photon.komoot.io) first: fuzzy match + `osm_tag=leisure:golf_course`
+  server-side filter, bare name (club suffix stripped) tried before the full name —
+  one request finds courses regardless of Golf Club / Country Club naming. Nominatim
+  suffix-variant search remains only as the fallback (strict matching, 1 req/s, and
+  bursty use gets the IP 429-banned). Waypoint search is Photon-first too.
 - Ride panel: kind chips (🚴 bike / 🏍 moto / 🚗 drive — re-routes drawn routes on switch),
   waypoint search (same debounce), draw tools (↩ Undo, ✕ Clear,
   `⟲ Close the loop` button when route is open), "— or —" divider, GPX upload

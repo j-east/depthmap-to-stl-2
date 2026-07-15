@@ -302,18 +302,24 @@ function addWaypoint(lon,lat,name){
     if(!document.getElementById('btitle').value.trim()) document.getElementById('btitle').value=name.split(',')[0]; }
   updateDrawInfo(); reroute();
 }
+async function placeSearch(q){         // photon first, nominatim fallback -> {name,full,lon,lat}
+  try{ const r=await photon(q); if(r.length) return r; }catch(e){}
+  const arr=await nominatim(q);
+  return arr.map(x=>({name:(x.namedetails&&x.namedetails.name)||x.display_name.split(',')[0],
+                      full:x.display_name, lon:+x.lon, lat:+x.lat}));
+}
 async function wpSearch(){
   const q=document.getElementById('wq').value.trim(); if(!q) return;
   const rd=document.getElementById('wres'); rd.textContent='searching…';
-  try{ const arr=await nominatim(q); if(!arr.length){rd.textContent='no matches';return;} rd.innerHTML='';
+  try{ const arr=await placeSearch(q); if(!arr.length){rd.textContent='no matches';return;} rd.innerHTML='';
     arr.slice(0,8).forEach(x=>{ const el=document.createElement('div');
       el.style.cssText='padding:7px 8px;margin:4px 0;background:#22222e;border:1px solid #33415a;border-radius:6px;cursor:pointer;font-size:13px';
-      el.innerHTML='<b>'+x.display_name.split(',')[0]+'</b><br><span style="color:#7a7a90;font-size:11px">'+x.display_name.split(',').slice(1,4).join(',')+'</span>';
+      el.innerHTML='<b>'+x.name+'</b><br><span style="color:#7a7a90;font-size:11px">'+x.full.split(',').slice(1,4).join(',')+'</span>';
       el.onclick=()=>{ rd.innerHTML=''; document.getElementById('wq').value='';
         const lon=+x.lon, lat=+x.lat;
         if(!editing){ const dy=0.08, dx=dy/Math.cos(lat*Math.PI/180);   // ~18 km view — ride scale
           cropTouched=false; enterEdit([lon-dx,lat-dy,lon+dx,lat+dy],true); }
-        addWaypoint(lon,lat,x.display_name); };
+        addWaypoint(lon,lat,x.full); };
       rd.appendChild(el); });
   }catch(e){ rd.textContent='search failed: '+e.message; }
 }
@@ -472,7 +478,34 @@ function showObjects(objs){
 
 // ---------- course search (Nominatim) ----------
 async function nominatim(q){ const r=await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=20&namedetails=1&q='+encodeURIComponent(q),{headers:{'Accept':'application/json'}}); if(!r.ok)throw new Error('Nominatim '+r.status); return r.json(); }
+// Photon (komoot): fuzzy typeahead geocoder, CORS-open, supports server-side tag filters —
+// primary search backend; Nominatim is the fallback (strict matching + harsh rate limits)
+async function photon(q,tag){
+  const url='https://photon.komoot.io/api/?q='+encodeURIComponent(q)+'&limit=20'+(tag?'&osm_tag='+encodeURIComponent(tag):'');
+  const r=await fetch(url); if(!r.ok) throw new Error('Photon '+r.status);
+  const j=await r.json();
+  return (j.features||[]).map(f=>{
+    const p=f.properties||{}, c=(f.geometry&&f.geometry.coordinates)||[0,0];
+    const ex=p.extent; let b;
+    if(ex) b={minlon:Math.min(ex[0],ex[2]),maxlon:Math.max(ex[0],ex[2]),minlat:Math.min(ex[1],ex[3]),maxlat:Math.max(ex[1],ex[3])};
+    else { const d=0.004; b={minlon:c[0]-d,maxlon:c[0]+d,minlat:c[1]-d,maxlat:c[1]+d}; }
+    const full=[p.name,p.city||p.county,p.state,p.country].filter(Boolean).join(', ');
+    return {name:p.name||full.split(',')[0], full, isGolf:(p.osm_key==='leisure'&&p.osm_value==='golf_course'),
+            b, lon:c[0], lat:c[1]};
+  });
+}
 async function searchCourses(name){
+  // Photon first: fuzzy match + golf_course tag filter in ONE request. Searching
+  // "hidden hills" finds "Hidden Hills Country Club" etc. regardless of suffix.
+  try{
+    // the fuzzy matcher works best on the bare name — strip club-ish suffixes
+    const bare=name.replace(/\s+(golf\s+(?:and\s+country\s+)?club|golf\s+course|golf\s+links|country\s+club|golf|club)\s*$/i,'').trim()||name;
+    let res=await photon(bare,'leisure:golf_course');
+    if(!res.length&&bare!==name) res=await photon(name,'leisure:golf_course');
+    if(res.length) return res;
+    const any=await photon(name);
+    if(any.length) return any;
+  }catch(e){ console.log('[tm] photon failed, falling back to nominatim:',e.message); }
   // OSM naming is loose: a "X Golf Club" is often mapped as "X Country Club" or
   // "X Golf Course" — try suffix variants until we have a few golf hits (SPEC §3)
   const seen=new Set(), golf=[]; let raw=[];
