@@ -82,6 +82,7 @@
     </div>
     <button class="go" id="gen">✓ Generate board</button>
     <button id="cancelEdit" style="display:none;width:100%;margin-top:6px;background:#2a3142">✕ Cancel — keep the current board</button>
+    <div id="log"></div>
     <div class="tip" id="tipGolf">Drag the <b>crop box</b> edges/corners to frame the board. Drag <b>hole numbers</b> to move them; click the ✕ to delete a stray one (e.g. a practice course).</div>
     <div class="tip" id="tipRide" style="display:none"><b>Click the map</b> to drop waypoints — the route snaps to roads. <b>Drag the route</b> to reshape it (Google-Maps style), drag waypoints to move them, ✕ to remove. Drag or two-finger scroll to pan, pinch to zoom. Frame with the <b>crop box</b> (drag its edges).</div>
   </div>
@@ -171,7 +172,6 @@
   <div id="pbar" style="display:none;height:6px;background:#22283a;border-radius:4px;overflow:hidden;margin-top:8px">
     <div id="pfill" style="height:100%;width:0%;background:linear-gradient(90deg,#2563eb,#4dd08a);transition:width .4s"></div>
   </div>
-  <div id="log"></div>
 </div>
 <div id="view"><canvas id="plan"></canvas>
   <div id="zoomctl" style="display:none;position:absolute;right:16px;top:16px;flex-direction:column;gap:6px;z-index:5">
@@ -611,6 +611,10 @@ function enterEdit(guess,isRide,exact){
     setStatus(routePts?'adjust, then Generate':'click the map to drop waypoints','#9a9ab0');
   }else{
     setStatus('<span class="spin"></span>loading course map…','#9fd');
+    // grey Generate until the course's OSM data is in — generating without the hole
+    // labels would produce an unlabeled board
+    const gb=document.getElementById('gen');
+    gb.disabled=true; gb.innerHTML='<span class="spin"></span> Loading map data…';
     workerReady ? worker.postMessage({type:'features',bbox:VP}) : (pendingFeatures=VP);
   }
 }
@@ -667,6 +671,8 @@ function onFeatures(m){
     buildCourseChecks();
   }
   setStatus(MODE==='ride'?(drawMode||routePts?'adjust, then Generate':'click the map to drop waypoints'):labels.filter(L=>!L.del).length+' holes · drag to adjust, then Generate','#9a9ab0');
+  const gb=document.getElementById('gen');
+  if(gb.disabled&&!building){ gb.disabled=false; gb.textContent='✓ Generate board'; }
   fitPlan(); drawPlan();
 }
 function drawPolys(list,fill){ if(!list)return; px.fillStyle=fill; list.forEach(w=>{ if(w.length<3)return; px.beginPath(); w.forEach((p,i)=>{const q=ll2px(p[0],p[1]); i?px.lineTo(q[0],q[1]):px.moveTo(q[0],q[1]);}); px.closePath(); px.fill(); }); }
@@ -834,7 +840,7 @@ function scheduleRefetch(){ clearTimeout(refetchT); refetchT=setTimeout(()=>{
 },700); }
 
 // ---------- build (worker) ----------
-let workerReady=false,tStart=0,pendingFeatures=null;
+let workerReady=false,tStart=0,pendingFeatures=null,building=false;
 const worker=new Worker('worker.js');
 worker.onerror=e=>{ console.error('[tm] worker crashed:',e.message,e.filename,e.lineno); setStatus('✕ engine error: '+e.message,'#ff8a8a'); };
 worker.onmessage=(ev)=>{ const m=ev.data; console.log('[tm] worker →',m.type,m.msg||'');
@@ -849,7 +855,7 @@ worker.onmessage=(ev)=>{ const m=ev.data; console.log('[tm] worker →',m.type,m
       const gb=document.getElementById('gen'); if(gb.disabled) gb.innerHTML=txt;
       const rb=document.getElementById('regen'); if(rb.disabled) rb.innerHTML=txt;
     } }
-  else if(m.type==='error'){ setStatus('✕ '+m.msg,'#ff8a8a'); pendingAction=null; pbar(null);
+  else if(m.type==='error'){ setStatus('✕ '+m.msg,'#ff8a8a'); pendingAction=null; pbar(null); building=false;
     const gb=document.getElementById('gen'); gb.disabled=false; gb.textContent=gb.dataset.prev||'✓ Generate board';
     const rb=document.getElementById('regen'); rb.disabled=false; rb.textContent='↻ Regenerate board'; }
   else if(m.type==='done'){
@@ -865,6 +871,7 @@ worker.onmessage=(ev)=>{ const m=ev.data; console.log('[tm] worker →',m.type,m
     const blob=new Blob([m.tmf],{type:'model/3mf'}); const dla=document.getElementById('dla');
     dla.href=URL.createObjectURL(blob); dla.download=((lastPlace||'board').split(',')[0].trim().replace(/\s+/g,'_')||'board')+'.3mf';
     document.getElementById('dl').style.display='block';
+    building=false;
     pbar(100); setTimeout(()=>pbar(null),700);
     let tri=0;m.objects.forEach(o=>tri+=o.ntri); setStatus('✓ done in '+((performance.now()-tStart)/1000).toFixed(1)+'s · '+tri.toLocaleString()+' tris','#7CFC9A');
     document.getElementById('gen').disabled=false;
@@ -876,6 +883,7 @@ function regenerate(){
   if(MODE==='ride'&&(!routePts||routePts.length<2)){ setStatus('draw at least 2 waypoints or upload a GPX first','#ffb86b'); return; }
   const ex=parseFloat(document.getElementById('ex').value);
   const holes=labels.filter(L=>!L.del).map(L=>({pts:L.pts,num:L.num,lx:L.lon,ly:L.lat}));
+  building=true;
   const gb=document.getElementById('gen'); gb.dataset.prev=gb.textContent;
   gb.disabled=true; gb.innerHTML='<span class="spin"></span> Generating…';
   setStatus('<span class="spin"></span>building…','#9fd'); tStart=performance.now();

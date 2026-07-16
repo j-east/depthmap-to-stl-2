@@ -109,6 +109,9 @@ Anything here that disappears without a SPEC.md edit is a bug.
 - Done panel: `↻ Regenerate board` (only when dirty), `✎ Edit crop / labels`,
   `⬇ download 3MF` (account-gated, auto-bakes when dirty, place-named file),
   `↑ Publish to gallery` (account-gated, auto-bakes, stores full recipe)
+- The monospace log sits directly below Generate/Cancel inside the edit panel; the
+  Generate button is greyed with "Loading map data…" until the course's OSM features
+  arrive (golf mode)
 - Bake hint + auto-rotate toggle (default ON) sit directly below the Generate button
   (between the done panel and the layerbox); status line, progress bar (worker
   milestones + creep), monospace log
