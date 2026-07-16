@@ -50,6 +50,7 @@ UI control  →  generate msg  →  worker.js  →  golf_board() kwarg  →  rec
 | ride kind | chips (bike/moto/drive) | `kind` | `route_kind` | `kind` + design `type` | no | bike |
 | waypoints (drawn) | map clicks | — | — | `wpts` | n/a | — |
 | crop bbox | crop box in edit step | `bbox` | `bbox` | design `bbox` | no | golf 1.5× guess / ride 1.25× track |
+| satellite turf scan | checkbox `#satscan` (golf, above Generate) | `satScan` | `sat_scan` + `sat_bytes` | `satScan` | no | off |
 
 ### 2a. Advanced section (IMPLEMENTED 2026-07-12)
 
@@ -201,7 +202,13 @@ Hard-won behaviors. **Do not undo these.**
     cached data (debounced 350 ms) and hot-swap them. golf_board and marks_layer share
     `_outline_mask` / `_number_objs` — never fork their logic. Organic-crop clipping of
     these layers happens only at the real bake (live swap may slightly overhang).
-16. Advanced UI is grouped: "heights · live" / "outline & numbers" (golf) / "board".
+16. **Satellite turf scan** (opt-in): worker fetches USGS NAIP (Esri World Imagery
+    fallback; cached per bbox) and golf_board classifies mown turf inside the hole
+    corridors — greenness G−max(R,B) ≥ 12, brightness 70–230, open/close cleanup
+    (thresholds ported from scripts/detect_fairways.py). Fills ONLY `lbl==0` cells
+    (OSM always wins); scanned turf within ~25 m of a pin end becomes green, the rest
+    fairway. Best-effort: any failure silently skips the scan.
+17. Advanced UI is grouped: "heights · live" / "outline & numbers" (golf) / "board".
 
 ## 6. Organic crops (IMPLEMENTED 2026-07-12)
 

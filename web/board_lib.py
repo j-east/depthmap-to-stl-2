@@ -217,7 +217,8 @@ def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
                hide_json="[]", route_w=2.4, route_h=1.0, title="", subtitle="", plaque_pos="bl",
                heights_json="{}", outline_blob=0.45, corridor_w=60.0, outline_h=0.9,
                num_size=9.0, num_h=1.1, num_flat=False, plaque_size=1.0,
-               crop_shape="rect", organic_pad_mm=8.0, outline_mode="union"):
+               crop_shape="rect", organic_pad_mm=8.0, outline_mode="union",
+               sat_scan=False, sat_bytes=None):
     P = float(pitch) if pitch else PITCH       # mesh pitch (mm); coarse for fast previews
     raw = dem_in.to_py() if hasattr(dem_in, "to_py") else dem_in
     if not ncols:                       # raw is a float32 GeoTIFF -> decode
@@ -398,6 +399,43 @@ def golf_board(dem_in, nrows, ncols, bbox, features_json, exag=4.0, base_mm=8.0,
                 # majority downsample (large ride boards: a 7 m road is sub-cell)
                 d.line(pts, fill=255, width=max(SS + 1, int(round(width_m * px_per_m * SS))), joint="curve")
         lbl[_down(im)] = i + 1
+
+    # satellite turf scan: fill fairways/greens where OSM has nothing (lbl==0 only —
+    # OSM always wins). Thresholds ported from scripts/detect_fairways.py; greens are
+    # scanned turf within ~25 m of each hole's pin end.
+    if sat_scan and sat_bytes is not None and holes and "fairway" not in hide:
+        try:
+            raw_sat = sat_bytes.to_py() if hasattr(sat_bytes, "to_py") else sat_bytes
+            sat = np.asarray(Image.open(io.BytesIO(bytes(raw_sat))).convert("RGB")
+                             .resize((nxb, nyb), Image.BILINEAR), dtype=np.float64)
+            green_idx = sat[..., 1] - np.maximum(sat[..., 0], sat[..., 2])
+            val = sat.mean(axis=2)
+            cimg = Image.new("L", (nxb, nyb), 0); cdr = ImageDraw.Draw(cimg)
+            cwc = max(2, int(round(float(corridor_w) * px_per_m)))
+            endpts = []
+            for h in holes:
+                pts = [ll_px(lo, la) for lo, la in h["pts"]]
+                if len(pts) >= 2:
+                    cdr.line(pts, fill=255, width=cwc, joint="curve")
+                    for p in (pts[0], pts[-1]):
+                        cdr.ellipse([p[0] - cwc / 2, p[1] - cwc / 2, p[0] + cwc / 2, p[1] + cwc / 2], fill=255)
+                    endpts.append(pts[-1])
+            corridor = np.asarray(cimg) > 0
+            turf = corridor & (green_idx >= 12) & (val >= 70) & (val <= 230) & (lbl == 0) & base_mask
+            def _dil(m, k):
+                return ~_erode(~m, k)
+            turf = _dil(_erode(turf, 2), 2)          # open: drop speckle
+            turf = _erode(_dil(turf, 3), 3)          # close: fill small gaps
+            if turf.any():
+                gr = 25.0 * px_per_m
+                gim = Image.new("L", (nxb, nyb), 0); gd2 = ImageDraw.Draw(gim)
+                for p in endpts:
+                    gd2.ellipse([p[0] - gr, p[1] - gr, p[0] + gr, p[1] + gr], fill=255)
+                gmask = turf & (np.asarray(gim) > 0)
+                lbl[gmask] = 3                       # green
+                lbl[turf & ~gmask] = 1               # fairway
+        except Exception:
+            pass                                     # scan is best-effort; never break a build
 
     objects = []
     Vb, Fb = _mesh(base_mask, Zt, np.zeros_like(Zt), BH, P)

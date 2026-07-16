@@ -80,6 +80,7 @@
       <label>courses on this land — include:</label>
       <div id="courselist"></div>
     </div>
+    <label class="feat" id="satrow" style="margin:8px 0"><input type="checkbox" id="satscan"> 🛰 fill missing turf from satellite</label>
     <button class="go" id="gen">✓ Generate board</button>
     <button id="cancelEdit" style="display:none;width:100%;margin-top:6px;background:#2a3142">✕ Cancel — keep the current board</button>
     <div id="log"></div>
@@ -599,6 +600,7 @@ function enterEdit(guess,isRide,exact){
   document.getElementById('layerbox').style.display='block'; syncLayerbox();
   document.getElementById('tipGolf').style.display=MODE==='ride'?'none':'block';
   document.getElementById('tipRide').style.display=MODE==='ride'?'block':'none';
+  document.getElementById('satrow').style.display=MODE==='ride'?'none':'flex';
   document.getElementById('plan').style.display='block'; document.getElementById('zoomctl').style.display='flex';
   splitEdit=false; plan.style.width='100%'; plan.style.borderRight='none';
   document.getElementById('zoomctl').style.right='16px';
@@ -1092,7 +1094,8 @@ function advParams(){
   return { heights:{road:g('advHroad'),cartpath:g('advHcart'),rail:g('advHrail'),water:g('advHwater'),turf:g('advHturf')},
     outlineBlob:g('advBlob'), corridorW:g('advCw'), outlineH:g('advOlh'),
     numSize:g('advNsz'), numH:g('advNh'), numFlat:document.getElementById('advNflat').checked,
-    plaqueSize:g('advPsz'), cropShape, organicPad:g('advOpad'), outlineMode };
+    plaqueSize:g('advPsz'), cropShape, organicPad:g('advOpad'), outlineMode,
+    satScan:document.getElementById('satscan').checked };
 }
 [['advCw','advCwV',0],['advBlob','advBlobV',2],['advOlh','advOlhV',1],['advNsz','advNszV',1],
  ['advNh','advNhV',1],['advHroad','advHroadV',1],['advHcart','advHcartV',1],['advHrail','advHrailV',1],
@@ -1105,6 +1108,7 @@ function advParams(){
       scheduleMarks();                       // shape changes: live outline/numbers remesh
   }); });
 document.getElementById('advNflat').addEventListener('change',()=>{ markDirty(); refreshLiveHeights(); scheduleMarks(); });
+document.getElementById('satscan').addEventListener('change',markDirty);
 function setAdvFromParams(p){
   const set=(id,vid,v,dec)=>{ if(v==null)return; document.getElementById(id).value=v;
     document.getElementById(vid).textContent=(+v).toFixed(dec); };
@@ -1117,6 +1121,7 @@ function setAdvFromParams(p){
   set('advPsz','advPszV',p.plaqueSize,2); set('advOpad','advOpadV',p.organicPad,0);
   if(p.cropShape) setCropShape(p.cropShape);
   if(p.outlineMode) setOutlineMode(p.outlineMode);
+  if(p.satScan!=null) document.getElementById('satscan').checked=!!p.satScan;
 }
 
 const RESVALS=[0.7,0.5,0.35,0.25], RESNAMES=['draft','standard','high','ultra'];

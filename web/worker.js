@@ -46,6 +46,20 @@ else:
 if np.isnan(dem_merged).all(): raise ValueError('no elevation data for this area')
 dem_merged = np.where(np.isnan(dem_merged), np.nanmin(dem_merged), dem_merged)
 `;
+// ---- satellite imagery for the turf scan: USGS NAIP (public domain), Esri fallback ----
+const SAT_NAIP='https://imagery.nationalmap.gov/arcgis/rest/services/USGSNAIPImagery/ImageServer/exportImage';
+const SAT_ESRI='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export';
+async function fetchSat(w,s,e,n){
+  const clat=(s+n)/2*Math.PI/180, Wm=(e-w)*111320*Math.cos(clat), Hm=(n-s)*111320, LONG=1600;
+  let W,H; if(Wm>=Hm){W=LONG;H=Math.max(2,Math.round(LONG*Hm/Wm));}else{H=LONG;W=Math.max(2,Math.round(LONG*Wm/Hm));}
+  const q=`?bbox=${w},${s},${e},${n}&bboxSR=4326&imageSR=4326&size=${W},${H}&format=png&f=image`;
+  for(const base of [SAT_NAIP,SAT_ESRI]){
+    try{ const r=await fetch(base+q); if(!r.ok) continue;
+      const b=new Uint8Array(await r.arrayBuffer()); if(b.length>2000) return b; }catch(e){}
+  }
+  throw new Error('no satellite imagery for this area');
+}
+
 // ---- OSM Overpass (mirrors, fall through on timeout) ----
 const OVERPASS=['https://overpass-api.de/api/interpreter',
                 'https://overpass.kumi.systems/api/interpreter',
@@ -112,7 +126,7 @@ function packMesh(objsMap){
 }
 
 let lastGen=null;                    // bbox/exag of the last full build (dem_merged persists as a pyodide global)
-let cacheKey=null, cacheFeats=null, cacheHoles=null;   // per-bbox OSM cache: regenerate = remesh, no refetch
+let cacheKey=null, cacheFeats=null, cacheHoles=null, cacheSat;   // per-bbox caches: regenerate = remesh, no refetch
 onmessage = async (ev)=>{
   const m=ev.data;
   if(m.type==='route'){              // live thickness/height: remesh only the ribbon
@@ -168,8 +182,19 @@ onmessage = async (ev)=>{
       pyodide.globals.set('noaa_bytes',dem.noaa);
       pyodide.runPython(MERGE_PY);        // -> dem_merged (seam-free land + real bathymetry)
       cacheKey=key; cacheFeats=JSON.stringify(ffx.feats); cacheHoles=ffx.holes;   // pre-hide copy
+      cacheSat=undefined;
       ff=ffx; demNote=`DEM ${dem.W}x${dem.H}`;
     }
+    let satBytes=null;
+    if(m.satScan&&!route.length){
+      if(cacheSat===undefined){
+        postMessage({type:'progress',msg:'fetching satellite imagery…',pct:31});
+        try{ cacheSat=await fetchSat(w,s,e,n); }
+        catch(err){ cacheSat=null; postMessage({type:'progress',msg:'satellite unavailable — skipping turf scan'}); }
+      }
+      satBytes=cacheSat;
+    }
+    pyodide.globals.set('sat_bytes',satBytes);
     hide.forEach(k=>{ delete ff.feats[k]; });        // excluded features never reach the mesher
     // m.holes = user-edited labels from the edit step; ride boards never get golf numbers
     const holes=route.length ? (m.holes||[]) : (m.holes||ff.holes);
@@ -190,7 +215,8 @@ onmessage = async (ev)=>{
       +`,outline_h=${+m.outlineH||0.9},num_size=${+m.numSize||9},num_h=${+m.numH||1.1}`
       +`,num_flat=${m.numFlat?'True':'False'},plaque_size=${+m.plaqueSize||1}`
       +`,crop_shape='${m.cropShape==='organic'?'organic':'rect'}',organic_pad_mm=${+m.organicPad||8}`
-      +`,outline_mode='${m.outlineMode==='holes'?'holes':'union'}'`;
+      +`,outline_mode='${m.outlineMode==='holes'?'holes':'union'}'`
+      +`,sat_scan=${satBytes?'True':'False'},sat_bytes=sat_bytes`;
     const call=p=>`golf_board(dem_merged,dem_merged.shape[0],dem_merged.shape[1],[${w},${s},${e},${n}],feats_json,${m.exag},${+m.baseH||8},holes_json,font_bytes,${p},route_json,'${kind}',hide_json,${routeW},${routeH},title_s,subtitle_s,'${m.plaquePos||'bl'}',${adv})`;
     postMessage({type:'progress',msg:'meshing the board…',pct:35});
     const res=pyodide.runPython(call(finePitch));
