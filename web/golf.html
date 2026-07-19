@@ -84,7 +84,8 @@
     <button class="go" id="gen">✓ Generate board</button>
     <button id="cancelEdit" style="display:none;width:100%;margin-top:6px;background:#2a3142">✕ Cancel — keep the current board</button>
     <div id="log"></div>
-    <div class="tip" id="tipGolf">Drag the <b>crop box</b> edges/corners to frame the board. Drag <b>hole numbers</b> to move them; click the ✕ to delete a stray one (e.g. a practice course).</div>
+    <div class="tip" id="tipGolf">Drag the <b>crop box</b> edges/corners to frame the board. Drag <b>hole numbers</b> to move them; click the ✕ to delete a stray one (e.g. a practice course).
+      <br>Missing fairways or greens? <a id="osmedit" href="https://www.openstreetmap.org" target="_blank" rel="noopener">✎ improve this course on OSM</a> — your edits feed every future board.</div>
     <div class="tip" id="tipRide" style="display:none"><b>Click the map</b> to drop waypoints — the route snaps to roads. <b>Drag the route</b> to reshape it (Google-Maps style), drag waypoints to move them, ✕ to remove. Drag or two-finger scroll to pan, pinch to zoom. Frame with the <b>crop box</b> (drag its edges).</div>
   </div>
 
@@ -601,6 +602,8 @@ function enterEdit(guess,isRide,exact){
   document.getElementById('tipGolf').style.display=MODE==='ride'?'none':'block';
   document.getElementById('tipRide').style.display=MODE==='ride'?'block':'none';
   document.getElementById('satrow').style.display=MODE==='ride'?'none':'flex';
+  if(MODE!=='ride'){ const cx=(guess[0]+guess[2])/2, cy=(guess[1]+guess[3])/2;   // iD editor at the course
+    document.getElementById('osmedit').href='https://www.openstreetmap.org/edit?editor=id#map=16/'+cy.toFixed(5)+'/'+cx.toFixed(5); }
   document.getElementById('plan').style.display='block'; document.getElementById('zoomctl').style.display='flex';
   splitEdit=false; plan.style.width='100%'; plan.style.borderRight='none';
   document.getElementById('zoomctl').style.right='16px';

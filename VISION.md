@@ -82,5 +82,7 @@ ribbon + outline/numbers via targeted remesh), organic crops with auto-placed
 plaques, per-course hole separation, accounts gating downloads/publish (Google
 sign-in ready behind GOOGLE_CLIENT_ID), rate-limited public API, Postgres
 gallery, cinematic homepage. SPEC.md is the behavioral contract. Satellite turf scan (NAIP) fills fairways/greens where OSM is
-incomplete (opt-in, OSM-wins precedence). Next fronts: Shopify ordering (PRD
-pending), data/ volume persistence, more model types.
+incomplete (opt-in, OSM-wins precedence). Next fronts: the COURSE GUIDE / yardage-book
+generator (see GUIDE.md — computed facts + Kimi K3 notes + Gemini-painted
+diagrams via user-owned OpenRouter credits), Shopify ordering (PRD pending),
+data/ volume persistence, more model types.

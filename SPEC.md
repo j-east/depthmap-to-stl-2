@@ -88,6 +88,8 @@ Anything here that disappears without a SPEC.md edit is a bug.
 - `#h1` title (mode emoji + name), `← gallery` link
 - Mode tabs: `⛳ Golf course` / `🚵 Ride loop` — switching carries the search text across
   and auto-searches in the target mode
+- Golf edit tip links `✎ improve this course on OSM` (iD editor deep link at the
+  course center) — upstream fixes beat auto-labelling for missing turf
 - Golf panel: search input (Enter + 1 s debounced autosearch, ≥3 chars, dedup),
   results list, `advanced: bbox` disclosure with manual W,S,E,N entry. Course search
   uses PHOTON (photon.komoot.io) first: fuzzy match + `osm_tag=leisure:golf_course`
